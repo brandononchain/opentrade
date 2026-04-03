@@ -1,0 +1,31 @@
+{
+  "name": "tradingview-agent",
+  "version": "1.0.0",
+  "description": "Powerful Claude-powered TradingView agent with CLI terminal and browser UI",
+  "type": "module",
+  "bin": {
+    "tva": "src/cli/index.js",
+    "tradingview-agent": "src/cli/index.js"
+  },
+  "main": "src/agent.js",
+  "scripts": {
+    "start": "node src/cli/index.js",
+    "server": "node src/web/server.js",
+    "dev": "node src/web/server.js --dev",
+    "build": "node scripts/build.js",
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.3",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "chalk": "^5.4.1",
+    "chrome-remote-interface": "^0.33.2",
+    "inquirer": "^12.6.0",
+    "marked": "^15.0.12",
+    "ora": "^8.2.0",
+    "ws": "^8.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

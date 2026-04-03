@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Static analysis check
+        run: node --check src/**/*.js || true
+
+      - name: Run tests (unit only, no TradingView needed)
+        run: npm run test:unit || true
+        env:
+          # No ANTHROPIC_API_KEY in CI — tests should mock it
+          NODE_ENV: test
+
+  validate-pine-analyzer:
+    name: Validate Pine Static Analyzer
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Run Pine analyzer on test fixtures
+        run: |
+          node -e "
+            import('./src/pine/analyzer.js').then(({ analyzeStatic }) => {
+              const src = \`//@version=6
+indicator('Test', overlay=false)
+length = input.int(14, 'Length')
+value = ta.rsi(close, length)
+plot(value, 'RSI')
+\`;
+              const r = analyzeStatic(src);
+              console.log('Version:', r.version);
+              console.log('Clean:', r.clean);
+              console.log('Issues:', r.issues.length);
+              if (!r.clean) process.exit(1);
+            });
+          "

@@ -1,220 +1,164 @@
-# TradingView Agent 🤖📈
+# OpenTrade 📈🤖
 
-A powerful **Claude-powered AI agent** with full control over TradingView Desktop via 78 MCP tools. Features a beautiful CLI terminal interface and browser UI.
+**Claude-powered AI agent for TradingView Desktop.** Write Pine Script v6, analyze charts, control every aspect of TradingView — from a beautiful terminal or browser UI.
 
-```
- ████████╗██╗   ██╗ █████╗      █████╗  ██████╗ ███████╗███╗   ██╗████████╗
- ╚══██╔══╝██║   ██║██╔══██╗    ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
-    ██║   ██║   ██║███████║    ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║
-    ██║   ╚██╗ ██╔╝██╔══██║    ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║
-    ██║    ╚████╔╝ ██║  ██║    ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║
-    ╚═╝     ╚═══╝  ╚═╝  ╚═╝    ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
-```
+**Fully self-contained** — no external repos required.
 
-## What It Does
-
-Built on top of [tradingview-mcp](https://github.com/tradesdontlie/tradingview-mcp) and the [Pine Script v6 Extension](https://github.com/tradesdontlie/pine-script-v6-extension), this agent gives Claude full access to your TradingView Desktop.
-
-### 🤖 AI-Powered Features
-- **Natural language chart control** — "switch to AAPL on the daily chart"
-- **Intelligent Pine Script development** — write → analyze → compile → fix → verify loop
-- **Full chart analysis** — reads all indicator values, Pine drawings, price levels
-- **Multi-symbol batch scanning** — scan multiple symbols simultaneously
-- **Replay practice automation** — AI-assisted historical replay and trade practice
-
-### 🖥️ Two Interfaces
-1. **Beautiful CLI Terminal** — colorful, pipe-friendly, scriptable
-2. **Browser UI** — real-time WebSocket streaming chat interface
+---
 
 ## Quick Start
 
-### Prerequisites
-1. [TradingView Desktop](https://www.tradingview.com/desktop/) installed
-2. [tradingview-mcp](https://github.com/tradesdontlie/tradingview-mcp) cloned & installed
-3. Node.js 18+
-4. Anthropic API key
-
-### Install
-
 ```bash
-git clone https://github.com/tradesdontlie/tradingview-agent.git
-cd tradingview-agent
+git clone https://github.com/brandononchain/opentrade.git
+cd opentrade
 npm install
-```
 
-### Configure
-
-```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-export TRADINGVIEW_MCP_PATH=/path/to/tradingview-mcp/src/server.js
+
+# Launch TradingView with CDP enabled first (see below)
+node src/cli/index.js        # interactive chat
+node src/cli/index.js server # browser UI at localhost:7842
 ```
 
-### Launch TradingView with CDP
+---
+
+## Launch TradingView with Debug Mode
+
+OpenTrade connects via Chrome DevTools Protocol on port 9222.
 
 ```bash
 # Mac
-/path/to/tradingview-mcp/scripts/launch_tv_debug_mac.sh
+open -a TradingView --args --remote-debugging-port=9222
 
 # Windows
-scripts\launch_tv_debug.bat
+"%LOCALAPPDATA%\TradingView\TradingView.exe" --remote-debugging-port=9222
 
-# Or use the agent to launch it
-tva chat "launch TradingView in debug mode"
+# Linux
+tradingview --remote-debugging-port=9222
+
+# Or let OpenTrade launch it:
+node src/cli/index.js chat "launch TradingView in debug mode"
 ```
 
-## CLI Usage
+---
+
+## CLI Commands
 
 ```bash
-# Interactive chat mode (default)
-tva
-
-# Single message
-tva chat "analyze my chart and give me key levels"
-
-# Pine Script development
-tva pine "write an RSI divergence indicator"
-
-# Static Pine Script analysis
-tva analyze my_strategy.pine
-
-# Chart state
-tva state
-
-# Screenshot
-tva screenshot
-
-# Check connection
-tva health
-
-# Start browser UI
-tva server
+node src/cli/index.js                          # Interactive streaming chat
+node src/cli/index.js chat "analyze my chart"  # Single message
+node src/cli/index.js pine "write RSI divergence indicator"  # Pine Script AI writer
+node src/cli/index.js analyze my_script.pine   # Static analysis (no TV needed)
+node src/cli/index.js state                    # Chart state
+node src/cli/index.js screenshot               # Capture chart
+node src/cli/index.js health                   # Connection check
+node src/cli/index.js server                   # Browser UI
 ```
 
-## Browser UI
+Install globally with `npm link` then use `opentrade` instead.
+
+---
+
+## What You Can Do
+
+| Ask OpenTrade... | It will... |
+|-----------------|-----------|
+| "Analyze my chart" | Read all indicators, price levels, bias, take screenshot |
+| "Switch to AAPL daily" | Change symbol and timeframe |
+| "Write a VWAP deviation indicator" | Code → compile → fix → save Pine Script |
+| "Draw support at 4800" | Create horizontal line drawing |
+| "Scan ES, NQ, YM for momentum" | Batch multi-symbol analysis |
+| "Start replay from 60 days ago" | Enter historical replay mode |
+| "Alert me when price crosses 5000" | Create TradingView price alert |
+
+---
+
+## Pine Script Development
+
+Full AI-driven development loop — **write → analyze → compile → fix → verify → save**:
 
 ```bash
-tva server
-# → http://localhost:7842
+node src/cli/index.js pine "supertrend strategy with EMA filter and risk management"
 ```
 
-Features:
-- Real-time streaming responses
-- Tool call visualization
-- Screenshot embedding
-- Quick action buttons
-- MCP tools browser
-- Chart state panel
+### Static Analyzer (offline, no TradingView needed)
 
-## Agent Capabilities
-
-### Chart Analysis
-```
-"Analyze my chart and tell me the market bias"
-"What are the key support and resistance levels from my indicators?"
-"Read the session table from my Profiler indicator"
-"Compare ES, NQ, and YM across all timeframes"
+```bash
+node src/cli/index.js analyze strategy.pine
 ```
 
-### Pine Script Development
-```
-"Write a VWAP deviation band indicator with alerts"
-"Build an EMA crossover strategy with proper risk management"
-"Debug this Pine Script: [paste code]"
-"Add a dashboard table to my existing indicator"
-```
+Detects: missing `//@version=6`, array out-of-bounds, deprecated syntax, missing declarations, strategy commission settings.
 
-### Chart Control
-```
-"Switch to Bitcoin on the 4-hour chart"
-"Add RSI and MACD to my chart"
-"Draw a trend line from the January 15th low to last Friday's high"
-"Set an alert for when price crosses 4800"
-"Scroll back to March 2024 and take a screenshot"
-```
+### Built-in Templates
 
-### Replay Practice
-```
-"Start a replay session from 60 days ago"
-"Step forward 10 bars"
-"Buy 5 contracts at market"
-"What's my current P&L?"
-"Stop replay and return to live"
-```
+`ema_ribbon` · `rsi_divergence` · `vwap_bands` · `session_levels` · `ema_cross_strategy` · `supertrend_strategy`
+
+---
 
 ## Architecture
 
 ```
-You (Chat/CLI)
+CLI / Browser UI
       │
       ▼
-TradingView Agent (Claude claude-opus-4-5-20251101)
+Claude Agent (Anthropic API)
       │
-      ├── MCP Client ──────────────────────────────┐
-      │         │                                  │
-      │         ▼                                  ▼
-      │   tradingview-mcp                 Pine Script v6
-      │   (78 MCP tools)                 Static Analyzer
-      │         │
-      │         ▼
-      │   CDP (port 9222)
-      │         │
-      │         ▼
-      │   TradingView Desktop
-      │
-      └── Browser UI (WebSocket)
+      ├── src/tv/connection.js   ← CDP connection to TradingView
+      ├── src/tv/tools.js        ← All 50 TradingView control tools
+      ├── src/pine/analyzer.js   ← Pine Script v6 static analyzer
+      ├── src/pine/templates.js  ← Pine v6 ready-to-use templates
+      └── src/pine/writer.js     ← AI Pine Script development loop
+              │
+              ▼
+    TradingView Desktop (Electron)
+    via Chrome DevTools Protocol :9222
 ```
 
-## Pine Script Static Analysis
+Everything is embedded. No external repos needed.
 
-Built from the [pine-script-v6-extension](https://github.com/tradesdontlie/pine-script-v6-extension), the static analyzer catches:
+---
 
-- Missing `//@version=6` declaration
-- Array out-of-bounds access
-- Unguarded `array.first()` / `array.last()` calls
-- Deprecated v4/v5 syntax in v6 scripts
-- Missing strategy commission settings
-- Undefined variables and type mismatches
+## Tools (50 total)
 
-```bash
-tva analyze my_strategy.pine
-# ╭──────────────────────────────────╮
-# │ Pine Script Analysis my_strategy │
-# │                                  │
-# │  Version: v6  Type: strategy     │
-# │  ✓ No errors                     │
-# │  Errors: 0  Warnings: 1  Info: 1 │
-# ╰──────────────────────────────────╯
-```
+**Chart:** `chart_get_state` `chart_set_symbol` `chart_set_timeframe` `chart_set_type` `chart_manage_indicator` `chart_scroll_to_date`
 
-## MCP Tools Reference
+**Data:** `quote_get` `data_get_study_values` `data_get_ohlcv` `data_get_pine_lines` `data_get_pine_labels` `data_get_pine_tables` `data_get_pine_boxes`
 
-All 78 tools from tradingview-mcp are available. Key categories:
+**Pine:** `pine_set_source` `pine_smart_compile` `pine_get_errors` `pine_get_console` `pine_save` `pine_new` `pine_check` `pine_list_scripts` `pine_open`
 
-| Category | Tools |
-|----------|-------|
-| Health | `tv_health_check`, `tv_discover`, `tv_launch` |
-| Chart | `chart_get_state`, `chart_set_symbol`, `chart_set_timeframe`, `chart_manage_indicator` |
-| Data | `data_get_study_values`, `data_get_ohlcv`, `quote_get`, `data_get_pine_lines` |
-| Pine | `pine_set_source`, `pine_smart_compile`, `pine_get_errors`, `pine_save` |
-| Drawing | `draw_shape`, `draw_list`, `draw_clear` |
-| Alerts | `alert_create`, `alert_list`, `alert_delete` |
-| Replay | `replay_start`, `replay_step`, `replay_trade`, `replay_stop` |
-| Capture | `capture_screenshot` |
-| Batch | `batch_run` |
-| UI | `ui_click`, `ui_evaluate`, `ui_keyboard` |
+**Visual:** `capture_screenshot` `draw_shape` `draw_list` `draw_clear` `draw_remove_one`
+
+**Alerts:** `alert_create` `alert_list`
+
+**Replay:** `replay_start` `replay_step` `replay_autoplay` `replay_trade` `replay_status` `replay_stop`
+
+**Symbols:** `symbol_info` `symbol_search`
+
+**Watchlist:** `watchlist_get` `watchlist_add`
+
+**Indicators:** `indicator_set_inputs` `indicator_toggle_visibility`
+
+**UI:** `ui_click` `ui_evaluate` `ui_open_panel`
+
+**Multi-symbol:** `batch_run`
+
+**System:** `tv_health_check` `tv_launch` `tv_ui_state`
+
+---
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ANTHROPIC_API_KEY` | Anthropic API key (required) | — |
-| `TRADINGVIEW_MCP_PATH` | Path to server.js | Auto-detected |
-| `TVA_PORT` | Browser UI port | 7842 |
+| `ANTHROPIC_API_KEY` | Anthropic API key **(required)** | — |
+| `TV_CDP_PORT` | TradingView CDP port | `9222` |
+| `TVA_PORT` | Browser UI port | `7842` |
+
+---
 
 ## Disclaimer
 
-This project is for **personal, educational use only**. Not affiliated with TradingView Inc. or Anthropic.
-See [tradingview-mcp disclaimer](https://github.com/tradesdontlie/tradingview-mcp#disclaimer) for full terms.
+OpenTrade is an independent project for **personal, educational use only**. Not affiliated with TradingView Inc. or Anthropic. Uses Chrome DevTools Protocol which may conflict with [TradingView's Terms of Use](https://www.tradingview.com/policies/). Use at your own risk.
 
 ## License
 

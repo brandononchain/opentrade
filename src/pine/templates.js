@@ -302,3 +302,398 @@ export function searchTemplates(query) {
     .filter(([name, src]) => name.includes(q) || src.toLowerCase().includes(q))
     .map(([name]) => name);
 }
+
+// ── Quant / HFT / Hedge Fund Templates ──
+
+export const QUANT_TEMPLATES = {
+
+  // Statistical Z-Score Mean Reversion
+  zscore_mean_reversion: `//@version=6
+strategy("Z-Score Mean Reversion", overlay=false,
+    initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+    commission_type=strategy.commission.percent, commission_value=0.05, slippage=2,
+    calc_on_every_tick=false, process_orders_on_close=false)
+
+// ── Inputs ──
+grpZ = "Z-Score Settings"
+lookback  = input.int(20,   "Lookback Period",    minval=5,   group=grpZ)
+entryZ    = input.float(2.0,"Entry Z-Score",      minval=0.5, step=0.1, group=grpZ)
+exitZ     = input.float(0.5,"Exit Z-Score",       minval=0.0, step=0.1, group=grpZ)
+src       = input.source(close, "Source",                     group=grpZ)
+
+grpF = "Filters"
+useVolFilter = input.bool(true,  "Volume Filter",             group=grpF)
+volMult      = input.float(1.2,  "Min Relative Volume",       group=grpF, step=0.1)
+useTrendFilter = input.bool(true,"Trend Filter (200 EMA)",    group=grpF)
+
+// ── Calculations ──
+mean    = ta.sma(src, lookback)
+stddev  = ta.stdev(src, lookback)
+zscore  = stddev != 0 ? (src - mean) / stddev : 0
+
+ema200  = ta.ema(src, 200)
+avgVol  = ta.sma(volume, 20)
+relVol  = volume / avgVol
+
+// ── Filters ──
+volOk      = not useVolFilter   or relVol >= volMult
+trendLong  = not useTrendFilter or src > ema200
+trendShort = not useTrendFilter or src < ema200
+
+// ── Signals (use [1] to avoid lookahead) ──
+longEntry  = zscore[1] <= -entryZ and volOk[1] and trendLong[1]
+shortEntry = zscore[1] >=  entryZ and volOk[1] and trendShort[1]
+longExit   = zscore[1] >= -exitZ
+shortExit  = zscore[1] <=  exitZ
+
+// ── Execution ──
+if longEntry
+    strategy.entry("MR Long",  strategy.long)
+if shortEntry
+    strategy.entry("MR Short", strategy.short)
+if longExit  and strategy.position_size > 0
+    strategy.close("MR Long")
+if shortExit and strategy.position_size < 0
+    strategy.close("MR Short")
+
+// ── Plots ──
+plot(zscore, "Z-Score", color.blue, 2)
+hline( entryZ, "Entry Short", color.red,   linestyle=hline.style_dashed)
+hline(-entryZ, "Entry Long",  color.green, linestyle=hline.style_dashed)
+hline( exitZ,  "Exit Short",  color.orange,linestyle=hline.style_dotted)
+hline(-exitZ,  "Exit Long",   color.orange,linestyle=hline.style_dotted)
+hline(0, "Zero", color.gray, linestyle=hline.style_solid)
+
+bgcolor(zscore <= -entryZ ? color.new(color.green,90) :
+        zscore >=  entryZ ? color.new(color.red,  90) : na)
+`,
+
+  // VWAP + Volume Profile Institutional Strategy
+  vwap_institutional: `//@version=6
+strategy("VWAP Institutional Strategy", overlay=true,
+    initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+    commission_type=strategy.commission.percent, commission_value=0.05, slippage=2)
+
+// ── Inputs ──
+grpV = "VWAP"
+bandMult1 = input.float(1.0, "Band 1 Multiplier", step=0.1, group=grpV)
+bandMult2 = input.float(2.0, "Band 2 Multiplier", step=0.1, group=grpV)
+
+grpE = "Entry"
+entryMode = input.string("Band Fade", "Entry Mode",
+    options=["Band Fade", "VWAP Reclaim", "Both"], group=grpE)
+stopMult  = input.float(1.5, "ATR Stop Multiplier", step=0.1, group=grpE)
+atrLen    = input.int(14,    "ATR Length",          group=grpE)
+
+// ── VWAP Calculation ──
+vwapVal = ta.vwap(hlc3)
+atr     = ta.atr(atrLen)
+
+// ── Deviation Bands ──
+sumSq  = math.sum(math.pow(hlc3 - vwapVal, 2) * volume, 20)
+sumVol = math.sum(volume, 20)
+stdev  = math.sqrt(sumSq / math.max(sumVol, 1))
+
+upper1 = vwapVal + bandMult1 * stdev
+upper2 = vwapVal + bandMult2 * stdev
+lower1 = vwapVal - bandMult1 * stdev
+lower2 = vwapVal - bandMult2 * stdev
+
+// ── Signals ──
+// Band Fade: price touches ±2σ band → revert to VWAP
+longFade  = low[1]  <= lower2 and close[1] > open[1]  // touched lower2, closed green
+shortFade = high[1] >= upper2 and close[1] < open[1]  // touched upper2, closed red
+
+// VWAP Reclaim: price crosses VWAP on volume
+avgVol    = ta.sma(volume, 20)
+highVol   = volume[1] > avgVol[1] * 1.3
+longReclaim  = ta.crossover(close, vwapVal)[1]  and highVol
+shortReclaim = ta.crossunder(close, vwapVal)[1] and highVol
+
+longEntry  = entryMode == "Band Fade"     ? longFade   :
+             entryMode == "VWAP Reclaim"  ? longReclaim  :
+             longFade or longReclaim
+shortEntry = entryMode == "Band Fade"     ? shortFade  :
+             entryMode == "VWAP Reclaim"  ? shortReclaim :
+             shortFade or shortReclaim
+
+// ── Execution ──
+stopDist = stopMult * atr
+
+if longEntry and strategy.position_size == 0
+    strategy.entry("VWAP Long", strategy.long)
+    strategy.exit("VWAP Long X", "VWAP Long",
+        stop  = strategy.position_avg_price - stopDist,
+        limit = vwapVal)
+
+if shortEntry and strategy.position_size == 0
+    strategy.entry("VWAP Short", strategy.short)
+    strategy.exit("VWAP Short X", "VWAP Short",
+        stop  = strategy.position_avg_price + stopDist,
+        limit = vwapVal)
+
+// ── Plots ──
+plot(vwapVal, "VWAP",    color.yellow, 2)
+plot(upper1,  "Upper 1σ",color.new(color.blue, 60), 1)
+plot(upper2,  "Upper 2σ",color.new(color.blue, 30), 2)
+plot(lower1,  "Lower 1σ",color.new(color.red,  60), 1)
+plot(lower2,  "Lower 2σ",color.new(color.red,  30), 2)
+`,
+
+  // Momentum Factor Strategy (Hedge Fund Style)
+  momentum_factor: `//@version=6
+strategy("Momentum Factor Strategy", overlay=true,
+    initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=15,
+    commission_type=strategy.commission.percent, commission_value=0.05, slippage=2,
+    calc_on_every_tick=false, process_orders_on_close=false)
+
+// ── Inputs ──
+grpM = "Momentum"
+mom1  = input.int(1,   "Short-term (bars)",  minval=1, group=grpM)
+mom5  = input.int(5,   "Medium-term (bars)", minval=1, group=grpM)
+mom20 = input.int(20,  "Long-term (bars)",   minval=1, group=grpM)
+w1    = input.float(0.2,"Short weight",       step=0.05, group=grpM)
+w5    = input.float(0.3,"Medium weight",      step=0.05, group=grpM)
+w20   = input.float(0.5,"Long weight",        step=0.05, group=grpM)
+
+grpF = "Filters"
+rsiFilter   = input.bool(true,  "RSI Filter",        group=grpF)
+rsiLen      = input.int(14,     "RSI Length",        group=grpF)
+rsiOBLevel  = input.int(70,     "RSI OB (no long)",  group=grpF)
+rsiOSLevel  = input.int(30,     "RSI OS (no short)", group=grpF)
+atrStopMult = input.float(2.0,  "ATR Stop Mult",     group=grpF, step=0.1)
+atrLen      = input.int(14,     "ATR Length",        group=grpF)
+
+// ── Calculations ──
+ret1  = (close - close[mom1])  / close[mom1]
+ret5  = (close - close[mom5])  / close[mom5]
+ret20 = (close - close[mom20]) / close[mom20]
+
+// Composite momentum score: weighted sum, normalized
+rawMom = w1 * ret1 + w5 * ret5 + w20 * ret20
+
+// Rolling normalize: z-score of the composite momentum
+momMean   = ta.sma(rawMom, 60)
+momStd    = ta.stdev(rawMom, 60)
+momScore  = momStd != 0 ? (rawMom - momMean) / momStd : 0
+
+rsi  = ta.rsi(close, rsiLen)
+atr  = ta.atr(atrLen)
+ema50= ta.ema(close, 50)
+
+// Trend filter
+upTrend   = close > ema50
+downTrend = close < ema50
+
+// ── Signals ──
+longOk  = not rsiFilter or rsi < rsiOBLevel
+shortOk = not rsiFilter or rsi > rsiOSLevel
+
+longEntry  = momScore[1] >  1.0 and upTrend[1]   and longOk[1]
+shortEntry = momScore[1] < -1.0 and downTrend[1]  and shortOk[1]
+longExit   = momScore[1] <  0.0
+shortExit  = momScore[1] >  0.0
+
+// ── Execution ──
+stopDist = atr * atrStopMult
+
+if longEntry and strategy.position_size == 0
+    strategy.entry("Mom Long", strategy.long)
+    strategy.exit("Mom Long X", "Mom Long", stop=strategy.position_avg_price - stopDist)
+
+if shortEntry and strategy.position_size == 0
+    strategy.entry("Mom Short", strategy.short)
+    strategy.exit("Mom Short X", "Mom Short", stop=strategy.position_avg_price + stopDist)
+
+if longExit and strategy.position_size > 0
+    strategy.close("Mom Long")
+if shortExit and strategy.position_size < 0
+    strategy.close("Mom Short")
+
+// ── Plots ──
+plot(ema50, "EMA 50", color.orange, 1)
+plotshape(longEntry,  "Long",  shape.triangleup,   location.belowbar, color.green, size=size.small)
+plotshape(shortEntry, "Short", shape.triangledown, location.abovebar, color.red,   size=size.small)
+bgcolor(strategy.position_size > 0 ? color.new(color.green,95) :
+        strategy.position_size < 0 ? color.new(color.red,  95) : na)
+`,
+
+  // Opening Range Breakout (HFT Intraday)
+  opening_range_breakout: `//@version=6
+strategy("Opening Range Breakout", overlay=true,
+    initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+    commission_type=strategy.commission.percent, commission_value=0.05, slippage=2)
+
+// ── Inputs ──
+grpOR = "Opening Range"
+orMins  = input.int(30,   "OR Duration (minutes)", minval=5, maxval=120, group=grpOR)
+session = input.session("0930-1600",              "Session",             group=grpOR)
+
+grpE = "Entry"
+volConfirm = input.bool(true,  "Require Volume Confirmation", group=grpE)
+volMult    = input.float(1.5,  "Volume Multiplier",           group=grpE, step=0.1)
+atrFilter  = input.bool(true,  "ATR Range Filter",            group=grpE)
+minATRMult = input.float(0.5,  "Min OR Size (× ATR)",         group=grpE, step=0.1)
+
+grpX = "Exit"
+targetMult = input.float(2.0,  "Target (× OR size)",  group=grpX, step=0.1)
+stopMult   = input.float(0.5,  "Stop (× OR size)",    group=grpX, step=0.1)
+eodExit    = input.bool(true,  "Exit at 15:45",        group=grpX)
+
+// ── Opening Range Logic ──
+isInSession  = not na(time(timeframe.period, session))
+isNewSession = ta.change(time("D")) != 0 or (isInSession and not isInSession[1])
+
+// Track OR high/low during the first orMins minutes
+var float orHigh = na
+var float orLow  = na
+var bool  orSet  = false
+var int   barsSinceOpen = 0
+
+if isNewSession
+    orHigh := high
+    orLow  := low
+    orSet  := false
+    barsSinceOpen := 0
+
+if isInSession and not orSet
+    barsSinceOpen += 1
+    orHigh := math.max(orHigh, high)
+    orLow  := math.min(orLow,  low)
+    if barsSinceOpen >= orMins / timeframe.multiplier
+        orSet := true
+
+orSize = orHigh - orLow
+atr14  = ta.atr(14)
+avgVol = ta.sma(volume, 20)
+
+// ── Signals ──
+breakoutLong  = orSet and close[1] > orHigh and close > orHigh
+breakoutShort = orSet and close[1] < orLow  and close < orLow
+
+volOk    = not volConfirm or volume > avgVol * volMult
+sizeOk   = not atrFilter  or orSize >= atr14 * minATRMult
+eodTime  = hour == 15 and minute >= 45
+
+// ── Execution ──
+if breakoutLong and volOk and sizeOk and strategy.position_size == 0
+    strategy.entry("ORB Long", strategy.long)
+    strategy.exit("ORB Long X", "ORB Long",
+        limit = orHigh + orSize * targetMult,
+        stop  = orHigh - orSize * stopMult)
+
+if breakoutShort and volOk and sizeOk and strategy.position_size == 0
+    strategy.entry("ORB Short", strategy.short)
+    strategy.exit("ORB Short X", "ORB Short",
+        limit = orLow - orSize * targetMult,
+        stop  = orLow + orSize * stopMult)
+
+if eodExit and eodTime
+    strategy.close_all(comment="EOD")
+
+// ── Plots ──
+plot(orSet ? orHigh : na, "OR High", color.green, 2, plot.style_stepline)
+plot(orSet ? orLow  : na, "OR Low",  color.red,   2, plot.style_stepline)
+plot(orSet ? orHigh + orSize * targetMult : na, "Long Target",  color.new(color.green,50), 1, plot.style_stepline)
+plot(orSet ? orLow  - orSize * targetMult : na, "Short Target", color.new(color.red,  50), 1, plot.style_stepline)
+`,
+
+  // Multi-Factor Ranking Dashboard
+  multi_factor_dashboard: `//@version=6
+indicator("Multi-Factor Dashboard", overlay=false)
+
+// ── Inputs ──
+grp = "Factor Weights"
+wMom  = input.float(0.30, "Momentum Weight",        step=0.05, group=grp)
+wMR   = input.float(0.20, "Mean Reversion Weight",  step=0.05, group=grp)
+wVol  = input.float(0.20, "Volume Weight",          step=0.05, group=grp)
+wTrend= input.float(0.30, "Trend Weight",           step=0.05, group=grp)
+
+// ── Factor 1: Momentum (z-scored returns) ──
+ret5  = (close - close[5])  / close[5]  * 100
+ret20 = (close - close[20]) / close[20] * 100
+rawMom = 0.4 * ret5 + 0.6 * ret20
+momZ  = ta.stdev(rawMom, 60) != 0 ?
+        (rawMom - ta.sma(rawMom, 60)) / ta.stdev(rawMom, 60) : 0
+
+// ── Factor 2: Mean Reversion (z-score from mean) ──
+mrZ = ta.stdev(close, 20) != 0 ?
+      -(close - ta.sma(close, 20)) / ta.stdev(close, 20) : 0
+// Negative because being far below mean = positive MR signal
+
+// ── Factor 3: Volume (relative volume) ──
+relVol   = volume / ta.sma(volume, 20)
+volScore = math.min(math.max((relVol - 1.0) / 1.5, -1.0), 1.0)
+// Normalize to [-1, 1]: relVol of 2.5x → score of 1.0
+
+// ── Factor 4: Trend (EMA alignment score) ──
+ema9  = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+trendScore = (close > ema9 ? 0.33 : -0.33) +
+             (ema9  > ema21? 0.33 : -0.33) +
+             (ema21 > ema50? 0.34 : -0.34)
+
+// ── Composite Score ──
+composite = wMom * momZ + wMR * mrZ + wVol * volScore + wTrend * trendScore
+
+// Smooth
+smoothComp = ta.ema(composite, 3)
+
+// ── Color coding ──
+col = smoothComp >= 1.0  ? color.new(color.green,  0)  :
+      smoothComp >= 0.5  ? color.new(color.green,  50) :
+      smoothComp >= 0.0  ? color.new(color.gray,   30) :
+      smoothComp >= -0.5 ? color.new(color.red,    50) :
+                           color.new(color.red,    0)
+
+// ── Plots ──
+plot(smoothComp, "Composite Score", col, 3)
+plot(momZ,       "Momentum",   color.new(color.blue,   50), 1)
+plot(mrZ,        "Mean Rev",   color.new(color.purple, 50), 1)
+plot(trendScore, "Trend",      color.new(color.orange, 50), 1)
+
+hline( 1.0, "Strong Long",  color.green, linestyle=hline.style_dashed)
+hline( 0.5, "Long",         color.new(color.green,50), linestyle=hline.style_dotted)
+hline( 0.0, "Neutral",      color.gray)
+hline(-0.5, "Short",        color.new(color.red,  50), linestyle=hline.style_dotted)
+hline(-1.0, "Strong Short", color.red,   linestyle=hline.style_dashed)
+
+bgcolor(smoothComp >=  1.0 ? color.new(color.green, 90) :
+        smoothComp <= -1.0 ? color.new(color.red,   90) : na)
+
+// ── Table Dashboard ──
+var table t = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 80),
+    border_width=1, border_color=color.gray)
+
+if barstate.islast
+    table.cell(t, 0, 0, "FACTOR",    text_color=color.gray,  text_size=size.small)
+    table.cell(t, 1, 0, "SCORE",     text_color=color.gray,  text_size=size.small)
+
+    table.cell(t, 0, 1, "Momentum",  text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 1, str.tostring(momZ, "#.##"),
+        text_color = momZ >= 0 ? color.green : color.red, text_size=size.small)
+
+    table.cell(t, 0, 2, "Mean Rev",  text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 2, str.tostring(mrZ, "#.##"),
+        text_color = mrZ >= 0 ? color.green : color.red, text_size=size.small)
+
+    table.cell(t, 0, 3, "Volume",    text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 3, str.tostring(volScore, "#.##"),
+        text_color = volScore >= 0 ? color.green : color.red, text_size=size.small)
+
+    table.cell(t, 0, 4, "Trend",     text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 4, str.tostring(trendScore, "#.##"),
+        text_color = trendScore >= 0 ? color.green : color.red, text_size=size.small)
+
+    table.cell(t, 0, 5, "COMPOSITE", text_color=color.white, text_size=size.normal, text_halign=text.align_left)
+    table.cell(t, 1, 5, str.tostring(smoothComp, "#.##"),
+        text_color = smoothComp >= 0.5 ? color.green :
+                     smoothComp <= -0.5? color.red : color.gray,
+        text_size=size.normal)
+`,
+
+};
+
+// Merge quant templates into main TEMPLATES
+Object.assign(TEMPLATES, QUANT_TEMPLATES);

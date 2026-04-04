@@ -473,71 +473,149 @@ function invalidateMonacoCache() {
   _monacoLastCheck = 0;
 }
 
-// Open the Pine Editor using keyboard shortcut first (fastest), then DOM fallback
+// Open the Pine Editor — tries TV API first, then DOM buttons, then keyboard shortcut
 async function openPineEditor() {
-  // Primary: Alt+P is the TradingView keyboard shortcut for Pine Editor on most platforms
-  // We also try the bottom bar API and known DOM selectors
-  await evaluate(`
+  // Step 1: TV internal API (most reliable when available)
+  const apiOk = await evaluate(`
     (function() {
-      // TV API
       try {
         var bwb = window.TradingView && window.TradingView.bottomWidgetBar;
         if (bwb) {
-          if (typeof bwb.activateScriptEditorTab === 'function') { bwb.activateScriptEditorTab(); return; }
-          if (typeof bwb.showWidget === 'function') { bwb.showWidget('pine-editor'); return; }
+          if (typeof bwb.activateScriptEditorTab === 'function') { bwb.activateScriptEditorTab(); return true; }
+          if (typeof bwb.showWidget === 'function') { bwb.showWidget('pine-editor'); return true; }
         }
       } catch(e) {}
+      return false;
+    })()
+  `).catch(() => false);
+  if (apiOk) return;
 
-      // DOM buttons — sorted by most likely to exist
-      var sels = [
-        '[data-name="pine-editor-toolbar"]',
-        '[data-name="pine-dialog-button"]',
-        '[aria-label="Pine Editor"]',
-        '[aria-label="Pine"]',
-        '[class*="scriptEditorButton"]',
-      ];
+  // Step 2: Known DOM selectors — each tried individually (no comma-separated querySelector)
+  const domSels = [
+    '[data-name="pine-dialog-button"]',
+    '[data-name="pine-editor-toolbar"]',
+    '[aria-label="Pine Editor"]',
+    '[aria-label="Pine"]',
+    '[class*="scriptEditorButton"]',
+    '[class*="pine-editor-button"]',
+  ];
+  const domOk = await evaluate(`
+    (function() {
+      var sels = ${JSON.stringify(domSels)};
       for (var i = 0; i < sels.length; i++) {
         var b = document.querySelector(sels[i]);
-        if (b && b.offsetParent !== null) { b.click(); return; }
+        if (b && b.offsetParent !== null) { b.click(); return sels[i]; }
       }
-
-      // Text scan fallback
-      var btns = document.querySelectorAll('[role="button"], button');
-      for (var j = 0; j < btns.length; j++) {
-        var t = (btns[j].getAttribute('aria-label') || btns[j].textContent || '').trim();
-        if (t === 'Pine' || /pine editor/i.test(t)) { btns[j].click(); return; }
+      // Text content scan
+      var all = document.querySelectorAll('[role="button"], button');
+      for (var j = 0; j < all.length; j++) {
+        var t = (all[j].getAttribute('aria-label') || all[j].textContent || '').trim();
+        if (t === 'Pine' || t === 'Pine Editor' || /^pine\s*editor$/i.test(t)) {
+          all[j].click(); return 'text:' + t;
+        }
       }
+      return null;
     })()
-  `).catch(() => {});
+  `).catch(() => null);
+  if (domOk) return;
+
+  // Step 3: Keyboard shortcut Alt+P (TradingView default for Pine Editor)
+  const c = await getClient();
+  await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 1, key: 'p', code: 'KeyP', windowsVirtualKeyCode: 80 });
+  await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'p', code: 'KeyP', windowsVirtualKeyCode: 80 });
 }
 
 // Ensure Pine Editor is open and Monaco is accessible.
-// Returns true/false. Maximum wait: ~3 seconds total.
+// Smart wait: confirms Monaco model is loaded and editable, not just present.
 async function ensurePineEditorOpen() {
-  // Check cache first — if we already have Monaco, done immediately
+  // Fast path: Monaco already cached and alive
   const cached = await getMonaco();
   if (cached) return true;
 
   // Open the editor
   await openPineEditor();
 
-  // Poll with a short initial delay, then check every 300ms — max 10 attempts = 3s
-  await new Promise(r => setTimeout(r, 600));
-  for (let i = 0; i < 10; i++) {
-    const found = await getMonaco();
-    if (found) return true;
-    await new Promise(r => setTimeout(r, 300));
+  // Wait for Monaco to become fully ready — not just present but writable.
+  // TradingView loads Monaco asynchronously; the container appears before the
+  // editor model is ready. We poll for both presence AND ability to getValue().
+  for (let i = 0; i < 20; i++) {
+    // Give the animation/load a moment on first few iterations
+    const delay = i < 3 ? 500 : 300;
+    await new Promise(r => setTimeout(r, delay));
+
+    // Check if Monaco is accessible AND its model is ready
+    const ready = await evaluate(`
+      (function() {
+        // First: run discovery to populate window.__ot_monaco
+        if (!window.__ot_monaco || typeof window.__ot_monaco.getValue !== 'function') {
+          // Quick re-discovery attempt
+          try {
+            if (window.monaco && window.monaco.editor) {
+              var eds = window.monaco.editor.getEditors();
+              if (eds && eds.length > 0) window.__ot_monaco = eds[eds.length - 1];
+            }
+          } catch(e) {}
+          if (!window.__ot_monaco) {
+            try {
+              if (typeof require === 'function') {
+                var m = require('vs/editor/editor.main');
+                if (m && m.editor) {
+                  var eds = m.editor.getEditors();
+                  if (eds && eds.length > 0) window.__ot_monaco = eds[eds.length - 1];
+                }
+              }
+            } catch(e) {}
+          }
+          if (!window.__ot_monaco) {
+            var root = document.querySelector('.monaco-editor.pine-editor-monaco')
+                    || document.querySelector('[class*="pine-editor"] .monaco-editor');
+            if (root) {
+              var el = root;
+              for (var up = 0; up < 25 && el; up++, el = el.parentElement) {
+                var fk = Object.keys(el).find(function(k) { return k.startsWith('__reactFiber$'); });
+                if (!fk) continue;
+                var node = el[fk];
+                for (var d = 0; d < 40 && node; d++, node = node.return) {
+                  var v = ((node.memoizedProps || {}).value || {});
+                  if (v.monacoEnv && v.monacoEnv.editor) {
+                    var eds = v.monacoEnv.editor.getEditors();
+                    if (eds && eds.length > 0) { window.__ot_monaco = eds[eds.length - 1]; break; }
+                  }
+                }
+                if (window.__ot_monaco) break;
+              }
+            }
+          }
+        }
+
+        // Now check if Monaco model is actually ready (not just initialized)
+        if (!window.__ot_monaco) return false;
+        try {
+          var model = window.__ot_monaco.getModel();
+          if (!model) return false;
+          // Confirm we can read the value — this fails if model not fully loaded
+          window.__ot_monaco.getValue();
+          return true;
+        } catch(e) {
+          return false;
+        }
+      })()
+    `).catch(() => false);
+
+    if (ready) {
+      _monacoCache = true;
+      _monacoLastCheck = Date.now();
+      return true;
+    }
   }
 
-  // Editor container exists but Monaco not yet ready — still return true
-  // (setEditorValue has a textarea fallback)
-  const hasContainer = await evaluate(`
+  // Last resort: check if editor container is at least visible
+  const visible = await evaluate(`
     !!(document.querySelector('.monaco-editor.pine-editor-monaco') ||
-       document.querySelector('[class*="pine-editor"] .monaco-editor') ||
-       document.querySelector('[data-name="pine-editor"]'))
+       document.querySelector('[class*="pine-editor"] .monaco-editor'))
   `).catch(() => false);
 
-  return hasContainer;
+  return visible;
 }
 
 // Inject source into Monaco using CDP Runtime.callFunctionOn — bypasses
@@ -661,14 +739,19 @@ export async function pineGetSource() {
 }
 
 export async function pineSetSource({ source }) {
-  invalidateMonacoCache(); // force fresh discovery after source change
+  invalidateMonacoCache();
   const opened = await ensurePineEditorOpen();
-  if (!opened) throw new Error('Could not open Pine Editor. Click the Pine Editor tab in TradingView first.');
+  if (!opened) throw new Error('Could not open Pine Editor. Make sure TradingView is open in Chrome and the Pine Editor tab is visible.');
 
-  await new Promise(r => setTimeout(r, 300));
-
+  // ensurePineEditorOpen already confirmed Monaco model is ready — write immediately
   const result = await setEditorValue(source);
-  if (!result.ok) throw new Error('Pine Editor is open but could not write to it. Try clicking inside the editor and retrying.');
+  if (!result.ok) {
+    // One retry after a short wait — editor may have just finished animating
+    await new Promise(r => setTimeout(r, 800));
+    const retry = await setEditorValue(source);
+    if (!retry.ok) throw new Error('Could not write to Pine Editor. The editor opened but the Monaco model is not ready. Try again in a moment.');
+    return { success: true, lines: source.split('\n').length, method: retry.method + '_retry' };
+  }
 
   return { success: true, lines: source.split('\n').length, method: result.method };
 }
@@ -1154,22 +1237,39 @@ export async function uiEvaluate({ code }) {
 }
 
 export async function uiOpenPanel({ panel }) {
-  const selectors = {
-    'pine-editor': '[data-name="pine-dialog-button"], [aria-label="Pine"]',
-    'strategy-tester': '[data-name="backtesting-button"], [aria-label="Strategy Tester"]',
-    'watchlist': '[data-name="base-watchlist-widget-button"]',
-    'alerts': '[data-name="alerts-button"], [aria-label*="Alert"]',
+  // Map panel names to arrays of selectors — avoids interpolation of quotes
+  const selectorMap = {
+    'pine-editor':      ['[data-name="pine-dialog-button"]', '[aria-label="Pine"]', '[data-name="pine-editor-toolbar"]'],
+    'strategy-tester':  ['[data-name="backtesting-button"]', '[aria-label="Strategy Tester"]', '[data-name="strategy-tester-button"]'],
+    'watchlist':        ['[data-name="base-watchlist-widget-button"]', '[aria-label="Watchlist"]'],
+    'alerts':           ['[data-name="alerts-button"]', '[aria-label="Alerts"]', '[data-name="alerts-create-button"]'],
   };
-  const sel = selectors[panel];
-  if (!sel) throw new Error(`Unknown panel: ${panel}. Use: pine-editor, strategy-tester, watchlist, alerts`);
+  const sels = selectorMap[panel];
+  if (!sels) throw new Error(`Unknown panel: ${panel}. Use: pine-editor, strategy-tester, watchlist, alerts`);
+
   const clicked = await evaluate(`
     (function() {
-      var el = document.querySelector('${sel}');
-      if (el) { el.click(); return true; }
-      return false;
+      var sels = ${JSON.stringify(sels)};
+      for (var i = 0; i < sels.length; i++) {
+        try {
+          var el = document.querySelector(sels[i]);
+          if (el && el.offsetParent !== null) { el.click(); return sels[i]; }
+        } catch(e) {}
+      }
+      // Text content fallback
+      var labels = { 'pine-editor': /pine/i, 'strategy-tester': /strategy.?tester/i, 'watchlist': /watchlist/i, 'alerts': /alerts/i };
+      var label = labels[${JSON.stringify(panel)}];
+      if (label) {
+        var btns = document.querySelectorAll('button, [role="button"]');
+        for (var j = 0; j < btns.length; j++) {
+          var t = btns[j].getAttribute('aria-label') || btns[j].textContent || '';
+          if (label.test(t) && btns[j].offsetParent !== null) { btns[j].click(); return 'text:'+t.trim().slice(0,30); }
+        }
+      }
+      return null;
     })()
   `);
-  return { success: clicked, panel };
+  return { success: !!clicked, panel, clicked };
 }
 
 // ── Batch ──

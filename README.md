@@ -12,6 +12,8 @@
 [![Pine Script](https://img.shields.io/badge/Pine%20Script-v6-blue.svg)](https://www.tradingview.com/pine-script-docs/)
 [![Claude](https://img.shields.io/badge/Powered%20by-Claude%20AI-purple.svg)](https://anthropic.com)
 
+📚 **[Full Documentation](docs/Home.md)** · [Installation](docs/Installation.md) · [Tools Reference](docs/Tools-Reference.md) · [Quant Standards](docs/Quant-Standards.md) · [Roadmap](docs/Roadmap.md)
+
 > OpenTrade connects Claude AI to your live TradingView charts via Chrome DevTools Protocol. It reads your indicators, writes and compiles Pine Script, runs multi-symbol scans, executes quantitative analysis, and structures trades the way a hedge fund PM would — all through natural conversation.
 
 ---

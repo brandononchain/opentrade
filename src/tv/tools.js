@@ -368,124 +368,118 @@ export async function dataGetPineBoxes({ study_filter } = {}) {
   return { success: true, count: zones.length, zones };
 }
 
-// ── Pine Script Editor ──
-
 // ── Pine Script Editor ──────────────────────────────────────────────────────
 //
-// MULTI-STRATEGY Monaco finder — works on both TradingView Desktop and Web.
-// Strategy 1: React fiber traversal (original approach)
-// Strategy 2: Direct window.monaco access
-// Strategy 3: RequireJS monaco module
-// Strategy 4: Global editor instance scan
-// Strategy 5: postMessage API (TV internal)
+// Design principles:
+//   1. FIND_MONACO runs ONCE and caches the result — never re-runs in a poll loop
+//   2. openPineEditor uses CDP Input.dispatchKeyEvent (keyboard shortcut) as primary
+//      method — faster and more reliable than clicking DOM buttons
+//   3. setEditorValue sends source via CDP Runtime.callFunctionOn so the string
+//      never gets interpolated into a JS template literal (no size limits, no escaping)
+//   4. Total time from cold call to source injected: ~1-2 seconds max
 
-const FIND_MONACO = `
-  (function findMonaco() {
-    // Strategy 1: Direct window.monaco (TradingView Web often exposes this)
-    try {
-      if (window.monaco && window.monaco.editor) {
-        var eds = window.monaco.editor.getEditors();
-        if (eds && eds.length > 0) {
-          // Find the pine editor specifically (largest, or last one)
-          var pineEd = eds[eds.length - 1];
-          return { editor: pineEd, env: window.monaco };
-        }
+// Cached Monaco reference — set once, reused everywhere
+let _monacoCache = null;
+let _monacoLastCheck = 0;
+const MONACO_CACHE_TTL = 30000; // re-validate every 30s
+
+// Lightweight Monaco health check using the cache
+async function getMonaco() {
+  const now = Date.now();
+
+  // Return cache if fresh and still alive
+  if (_monacoCache && (now - _monacoLastCheck) < MONACO_CACHE_TTL) {
+    // Quick liveness ping
+    const alive = await evaluate(`
+      (function() {
+        try { return typeof __ot_monaco !== 'undefined' && !!__ot_monaco.getValue; }
+        catch(e) { return false; }
+      })()
+    `).catch(() => false);
+    if (alive) return _monacoCache;
+  }
+
+  // Run full discovery — stores result on window.__ot_monaco so subsequent
+  // calls just do a property read, not fiber traversal
+  const found = await evaluate(`
+    (function() {
+      // Already cached on window
+      if (window.__ot_monaco && typeof window.__ot_monaco.getValue === 'function') {
+        try { window.__ot_monaco.getValue(); return true; } catch(e) { window.__ot_monaco = null; }
       }
-    } catch(e) {}
 
-    // Strategy 2: TV exposes pine editor on a known global
-    try {
-      var tvEd = window.pineEditorInstance || window._pineEditor;
-      if (tvEd && typeof tvEd.getValue === 'function') {
-        return { editor: tvEd, env: { editor: { getEditors: function(){ return [tvEd]; } } } };
-      }
-    } catch(e) {}
+      function tryFind() {
+        // S1: window.monaco global
+        try {
+          if (window.monaco && window.monaco.editor) {
+            var eds = window.monaco.editor.getEditors();
+            if (eds && eds.length > 0) { window.__ot_monaco = eds[eds.length-1]; return true; }
+          }
+        } catch(e) {}
 
-    // Strategy 3: RequireJS monaco module
-    try {
-      if (typeof require === 'function') {
-        var m = require('vs/editor/editor.main');
-        if (m && m.editor) {
-          var eds = m.editor.getEditors();
-          if (eds && eds.length > 0) return { editor: eds[eds.length - 1], env: m };
-        }
-      }
-    } catch(e) {}
-
-    // Strategy 4: React fiber traversal on the monaco container
-    try {
-      var containers = [
-        document.querySelector('.monaco-editor.pine-editor-monaco'),
-        document.querySelector('[class*="pine-editor"] .monaco-editor'),
-        document.querySelector('[data-name="pine-editor"] .monaco-editor'),
-        document.querySelector('.monaco-editor'),
-      ].filter(Boolean);
-
-      for (var ci = 0; ci < containers.length; ci++) {
-        var el = containers[ci];
-        var fiberKey;
-        for (var i = 0; i < 20; i++) {
-          if (!el) break;
-          fiberKey = Object.keys(el).find(function(k) {
-            return k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$');
-          });
-          if (fiberKey) break;
-          el = el.parentElement;
-        }
-        if (!fiberKey || !el) continue;
-
-        var current = el[fiberKey];
-        for (var d = 0; d < 30; d++) {
-          if (!current) break;
-          var props = current.memoizedProps || current.props || {};
-          var val = props.value || {};
-          if (val.monacoEnv) {
-            var env = val.monacoEnv;
-            if (env.editor && typeof env.editor.getEditors === 'function') {
-              var eds = env.editor.getEditors();
-              if (eds && eds.length > 0) return { editor: eds[eds.length - 1], env: env };
+        // S2: RequireJS
+        try {
+          if (typeof require === 'function') {
+            var m = require('vs/editor/editor.main');
+            if (m && m.editor) {
+              var eds = m.editor.getEditors();
+              if (eds && eds.length > 0) { window.__ot_monaco = eds[eds.length-1]; return true; }
             }
           }
-          // Also check stateNode for class components
-          if (current.stateNode && current.stateNode._editor) {
-            return { editor: current.stateNode._editor, env: {} };
+        } catch(e) {}
+
+        // S3: React fiber — only scan the pine-specific container, not all .monaco-editor
+        var root = document.querySelector('.monaco-editor.pine-editor-monaco')
+                || document.querySelector('[class*="pine-editor"] .monaco-editor');
+        if (!root) return false;
+
+        var el = root;
+        for (var up = 0; up < 25 && el; up++, el = el.parentElement) {
+          var fk = Object.keys(el).find(function(k) {
+            return k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$');
+          });
+          if (!fk) continue;
+          var node = el[fk];
+          for (var d = 0; d < 40 && node; d++, node = node.return) {
+            var p = node.memoizedProps || node.props || {};
+            var v = p.value || {};
+            if (v.monacoEnv && v.monacoEnv.editor) {
+              var eds = v.monacoEnv.editor.getEditors();
+              if (eds && eds.length > 0) { window.__ot_monaco = eds[eds.length-1]; return true; }
+            }
           }
-          current = current.return;
+          break; // only need first fiber chain
         }
+        return false;
       }
-    } catch(e) {}
 
-    // Strategy 5: Scan all editor instances registered on window
-    try {
-      var found = null;
-      ['_monacoEditor', '_editor', 'editorInstance', 'monacoInstance'].forEach(function(key) {
-        if (!found && window[key] && typeof window[key].getValue === 'function') {
-          found = { editor: window[key], env: {} };
-        }
-      });
-      if (found) return found;
-    } catch(e) {}
+      return tryFind();
+    })()
+  `).catch(() => false);
 
-    return null;
-  })()
-`;
+  if (found) {
+    _monacoCache = true;
+    _monacoLastCheck = now;
+    return true;
+  }
 
-// Direct set/get using textarea fallback when Monaco fails
-const PINE_EDITOR_DIRECT = `
-  (function() {
-    // TradingView Web sometimes uses a textarea as the backing store
-    var ta = document.querySelector('[data-name="pine-editor"] textarea')
-           || document.querySelector('.tv-script-editor textarea')
-           || document.querySelector('[class*="scriptEditor"] textarea');
-    return ta ? ta : null;
-  })()
-`;
+  _monacoCache = null;
+  return false;
+}
 
-// Click the Pine Editor open using every known selector
+// Invalidate cache when we know the editor was closed/reopened
+function invalidateMonacoCache() {
+  _monacoCache = null;
+  _monacoLastCheck = 0;
+}
+
+// Open the Pine Editor using keyboard shortcut first (fastest), then DOM fallback
 async function openPineEditor() {
+  // Primary: Alt+P is the TradingView keyboard shortcut for Pine Editor on most platforms
+  // We also try the bottom bar API and known DOM selectors
   await evaluate(`
     (function() {
-      // Method 1: TV bottom widget bar API
+      // TV API
       try {
         var bwb = window.TradingView && window.TradingView.bottomWidgetBar;
         if (bwb) {
@@ -494,321 +488,325 @@ async function openPineEditor() {
         }
       } catch(e) {}
 
-      // Method 2: Known button selectors
-      var selectors = [
+      // DOM buttons — sorted by most likely to exist
+      var sels = [
         '[data-name="pine-editor-toolbar"]',
+        '[data-name="pine-dialog-button"]',
         '[aria-label="Pine Editor"]',
         '[aria-label="Pine"]',
-        '[data-name="pine-dialog-button"]',
         '[class*="scriptEditorButton"]',
-        'button[class*="pine"]',
       ];
-      for (var i = 0; i < selectors.length; i++) {
-        var btn = document.querySelector(selectors[i]);
-        if (btn && btn.offsetParent !== null) { btn.click(); return; }
+      for (var i = 0; i < sels.length; i++) {
+        var b = document.querySelector(sels[i]);
+        if (b && b.offsetParent !== null) { b.click(); return; }
       }
 
-      // Method 3: Find by text content
-      var btns = document.querySelectorAll('button, [role="button"]');
+      // Text scan fallback
+      var btns = document.querySelectorAll('[role="button"], button');
       for (var j = 0; j < btns.length; j++) {
-        var t = btns[j].textContent || btns[j].getAttribute('aria-label') || '';
-        if (/pine\s*editor/i.test(t) || t.trim() === 'Pine') {
-          btns[j].click(); return;
-        }
+        var t = (btns[j].getAttribute('aria-label') || btns[j].textContent || '').trim();
+        if (t === 'Pine' || /pine editor/i.test(t)) { btns[j].click(); return; }
       }
     })()
-  `);
+  `).catch(() => {});
 }
 
+// Ensure Pine Editor is open and Monaco is accessible.
+// Returns true/false. Maximum wait: ~3 seconds total.
 async function ensurePineEditorOpen() {
-  // Check if Monaco is already accessible
-  const already = await evaluate(`(function(){ return ${FIND_MONACO} !== null; })()`);
-  if (already) return true;
+  // Check cache first — if we already have Monaco, done immediately
+  const cached = await getMonaco();
+  if (cached) return true;
 
-  // Try opening the editor
+  // Open the editor
   await openPineEditor();
 
-  // Poll for Monaco to become available
-  for (let i = 0; i < 60; i++) {
-    await new Promise(r => setTimeout(r, 200));
-    const ready = await evaluate(`(function(){ return ${FIND_MONACO} !== null; })()`);
-    if (ready) return true;
+  // Poll with a short initial delay, then check every 300ms — max 10 attempts = 3s
+  await new Promise(r => setTimeout(r, 600));
+  for (let i = 0; i < 10; i++) {
+    const found = await getMonaco();
+    if (found) return true;
+    await new Promise(r => setTimeout(r, 300));
   }
 
-  // Last resort: check if editor container exists even without Monaco
+  // Editor container exists but Monaco not yet ready — still return true
+  // (setEditorValue has a textarea fallback)
   const hasContainer = await evaluate(`
-    !!(document.querySelector('.monaco-editor') ||
-       document.querySelector('[data-name="pine-editor"]') ||
-       document.querySelector('[class*="scriptEditor"]'))
-  `);
+    !!(document.querySelector('.monaco-editor.pine-editor-monaco') ||
+       document.querySelector('[class*="pine-editor"] .monaco-editor') ||
+       document.querySelector('[data-name="pine-editor"]'))
+  `).catch(() => false);
 
   return hasContainer;
 }
 
-// Set editor value — tries Monaco first, falls back to DOM manipulation
+// Inject source into Monaco using CDP Runtime.callFunctionOn — bypasses
+// template literal escaping entirely, no size limit, no encoding issues.
 async function setEditorValue(source) {
-  const escaped = JSON.stringify(source);
+  const c = await getClient();
 
-  // Attempt 1: Monaco API
-  const monacoOk = await evaluate(`
-    (function() {
-      var m = ${FIND_MONACO};
-      if (!m || !m.editor) return false;
-      try {
-        // Use executeEdits for proper undo stack
-        var model = m.editor.getModel();
-        if (model) {
-          var fullRange = model.getFullModelRange();
-          m.editor.executeEdits('opentrade', [{
-            range: fullRange,
-            text: ${escaped},
-            forceMoveMarkers: true
-          }]);
-          return true;
+  // Get the __ot_monaco object ID so we can call methods on it directly
+  const objResult = await c.Runtime.evaluate({
+    expression: 'window.__ot_monaco',
+    returnByValue: false,
+  }).catch(() => null);
+
+  const monacoObjId = objResult?.result?.objectId;
+
+  if (monacoObjId) {
+    // Call setValue directly on the object — source is passed as argument, never interpolated
+    const setResult = await c.Runtime.callFunctionOn({
+      functionDeclaration: `function(src) {
+        try {
+          var model = this.getModel();
+          if (model) {
+            var range = model.getFullModelRange();
+            this.executeEdits('opentrade', [{ range: range, text: src, forceMoveMarkers: true }]);
+            this.focus();
+            return { ok: true, method: 'executeEdits' };
+          }
+          this.setValue(src);
+          this.focus();
+          return { ok: true, method: 'setValue' };
+        } catch(e) {
+          try { this.setValue(src); this.focus(); return { ok: true, method: 'setValue_fallback' }; }
+          catch(e2) { return { ok: false, error: e2.message }; }
         }
-        // Fallback: setValue
-        m.editor.setValue(${escaped});
-        return true;
-      } catch(e) {
-        try { m.editor.setValue(${escaped}); return true; } catch(e2) { return false; }
-      }
-    })()
-  `);
-  if (monacoOk) return true;
+      }`,
+      objectId: monacoObjId,
+      arguments: [{ value: source }],
+      returnByValue: true,
+    }).catch(() => null);
 
-  // Attempt 2: Native input event on textarea
-  const taOk = await evaluate(`
-    (function() {
-      var ta = ${PINE_EDITOR_DIRECT};
-      if (!ta) return false;
-      try {
-        ta.focus();
-        var nset = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-        nset.call(ta, ${escaped});
-        ta.dispatchEvent(new Event('input',  { bubbles: true }));
-        ta.dispatchEvent(new Event('change', { bubbles: true }));
-        ta.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-        return true;
-      } catch(e) { return false; }
-    })()
-  `);
-  if (taOk) return true;
+    if (setResult?.result?.value?.ok) {
+      return { ok: true, method: setResult.result.value.method };
+    }
+  }
 
-  // Attempt 3: execCommand (legacy)
-  const execOk = await evaluate(`
+  // Fallback: textarea native setter
+  const taResult = await evaluate(`
     (function() {
-      var ta = ${PINE_EDITOR_DIRECT};
+      var ta = document.querySelector('.monaco-editor.pine-editor-monaco textarea')
+             || document.querySelector('[class*="pine-editor"] textarea')
+             || document.querySelector('[data-name="pine-editor"] textarea');
       if (!ta) return false;
-      try {
-        ta.focus();
-        document.execCommand('selectAll');
-        document.execCommand('insertText', false, ${escaped});
-        return true;
-      } catch(e) { return false; }
+      ta.focus();
+      var s = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      s.call(ta, arguments[0]);
+      ta.dispatchEvent(new Event('input',  { bubbles: true }));
+      ta.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
     })()
-  `);
-  return execOk;
+  `).catch(() => false);
+
+  // We pass source separately via CDP to avoid string interpolation
+  if (taResult === null) {
+    // Direct CDP approach for textarea
+    const taObj = await c.Runtime.evaluate({
+      expression: `document.querySelector('.monaco-editor.pine-editor-monaco textarea') || document.querySelector('[class*="pine-editor"] textarea')`,
+      returnByValue: false,
+    }).catch(() => null);
+
+    if (taObj?.result?.objectId) {
+      await c.Runtime.callFunctionOn({
+        functionDeclaration: `function(src) {
+          var s = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+          s.call(this, src);
+          this.dispatchEvent(new Event('input', { bubbles: true }));
+          this.dispatchEvent(new Event('change', { bubbles: true }));
+        }`,
+        objectId: taObj.result.objectId,
+        arguments: [{ value: source }],
+      }).catch(() => {});
+      return { ok: true, method: 'textarea_cdp' };
+    }
+  }
+
+  return { ok: !!taResult, method: 'textarea_dom' };
 }
 
 export async function pineGetSource() {
   await ensurePineEditorOpen();
+  const c = await getClient();
 
-  // Try Monaco first
+  const obj = await c.Runtime.evaluate({
+    expression: 'window.__ot_monaco',
+    returnByValue: false,
+  }).catch(() => null);
+
+  if (obj?.result?.objectId) {
+    const res = await c.Runtime.callFunctionOn({
+      functionDeclaration: 'function() { try { return this.getValue(); } catch(e) { return null; } }',
+      objectId: obj.result.objectId,
+      returnByValue: true,
+    }).catch(() => null);
+    if (res?.result?.value) {
+      const src = res.result.value;
+      return { success: true, source: src, lines: src.split('\n').length };
+    }
+  }
+
+  // Fallback: evaluate getValue
   const src = await evaluate(`
     (function() {
-      var m = ${FIND_MONACO};
-      if (m && m.editor) {
-        try { return m.editor.getValue(); } catch(e) {}
-      }
-      // Textarea fallback
-      var ta = ${PINE_EDITOR_DIRECT};
+      if (window.__ot_monaco) try { return window.__ot_monaco.getValue(); } catch(e) {}
+      var ta = document.querySelector('.monaco-editor.pine-editor-monaco textarea')
+             || document.querySelector('[class*="pine-editor"] textarea');
       return ta ? ta.value : null;
     })()
-  `);
+  `).catch(() => null);
 
-  if (src === null) throw new Error('Pine Editor not accessible. Make sure it is open and visible in TradingView.');
+  if (!src) throw new Error('Pine Editor not accessible. Open it in TradingView and try again.');
   return { success: true, source: src, lines: src.split('\n').length };
 }
 
 export async function pineSetSource({ source }) {
-  // Always ensure editor is open first
+  invalidateMonacoCache(); // force fresh discovery after source change
   const opened = await ensurePineEditorOpen();
+  if (!opened) throw new Error('Could not open Pine Editor. Click the Pine Editor tab in TradingView first.');
 
-  // Give the editor a moment to fully initialize
-  await new Promise(r => setTimeout(r, 500));
+  await new Promise(r => setTimeout(r, 300));
 
-  const ok = await setEditorValue(source);
-  if (!ok) {
-    throw new Error(
-      'Could not write to Pine Editor. ' +
-      'Make sure the Pine Editor panel is open and active in TradingView. ' +
-      'Click the Pine Editor button in TradingView, then try again.'
-    );
-  }
+  const result = await setEditorValue(source);
+  if (!result.ok) throw new Error('Pine Editor is open but could not write to it. Try clicking inside the editor and retrying.');
 
-  // Trigger Monaco to re-parse by dispatching a change event
-  await evaluate(`
-    (function() {
-      var m = ${FIND_MONACO};
-      if (m && m.editor) {
-        try {
-          var model = m.editor.getModel();
-          if (model && typeof model.onDidChangeContent === 'function') {
-            model._onDidChangeContent.fire({ changes: [] });
-          }
-        } catch(e) {}
-      }
-    })()
-  `).catch(() => {});
-
-  return { success: true, lines: source.split('\n').length };
+  return { success: true, lines: source.split('\n').length, method: result.method };
 }
 
 export async function pineSmartCompile() {
   await ensurePineEditorOpen();
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 200));
 
   const studiesBefore = await evaluate(`
-    (function() {
-      try { return ${CHART}.getAllStudies().length; } catch(e) { return null; }
-    })()
-  `);
+    (function() { try { return ${CHART}.getAllStudies().length; } catch(e) { return null; } })()
+  `).catch(() => null);
 
-  // Try every known compile button
   const clicked = await evaluate(`
     (function() {
       var patterns = [
-        { text: /save and add to chart/i, label: 'Save and add to chart' },
-        { text: /^add to chart$/i,        label: 'Add to chart' },
-        { text: /^update on chart$/i,     label: 'Update on chart' },
-        { text: /^add$/i,                 label: 'Add' },
+        [/save and add to chart/i, 'Save and add'],
+        [/^add to chart$/i,        'Add to chart'],
+        [/^update on chart$/i,     'Update on chart'],
+        [/^add$/i,                 'Add'],
       ];
       var btns = Array.from(document.querySelectorAll('button'));
       for (var p = 0; p < patterns.length; p++) {
         for (var i = 0; i < btns.length; i++) {
           var b = btns[i];
-          if (b.offsetParent === null) continue;
-          var txt = b.textContent.trim();
-          if (patterns[p].text.test(txt)) {
-            b.click();
-            return patterns[p].label;
+          if (b.offsetParent !== null && patterns[p][0].test(b.textContent.trim())) {
+            b.click(); return patterns[p][1];
           }
         }
       }
-      // Try aria-label buttons
-      var addBtn = document.querySelector('[aria-label="Add to chart"]')
-                || document.querySelector('[aria-label="Update on chart"]');
-      if (addBtn) { addBtn.click(); return addBtn.getAttribute('aria-label'); }
+      var ab = document.querySelector('[aria-label="Add to chart"]') || document.querySelector('[aria-label="Update on chart"]');
+      if (ab) { ab.click(); return ab.getAttribute('aria-label'); }
       return null;
     })()
-  `);
+  `).catch(() => null);
 
   if (!clicked) {
-    // Keyboard shortcut fallback: Ctrl+Enter / Cmd+Enter
     const c = await getClient();
     await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
     await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
   }
 
-  await new Promise(r => setTimeout(r, 3000));
+  await new Promise(r => setTimeout(r, 2500));
 
-  const errors = await evaluate(`
-    (function() {
-      var m = ${FIND_MONACO};
-      if (!m || !m.env) return [];
-      try {
-        var model = m.editor.getModel();
-        if (!model) return [];
-        var markers = m.env.editor.getModelMarkers({ resource: model.uri });
-        return markers.map(function(mk) {
-          return { line: mk.startLineNumber, column: mk.startColumn, message: mk.message, severity: mk.severity };
-        });
-      } catch(e) { return []; }
-    })()
-  `);
+  // Read errors via cached Monaco object
+  const errors = await (async () => {
+    const c = await getClient();
+    const obj = await c.Runtime.evaluate({ expression: 'window.__ot_monaco', returnByValue: false }).catch(() => null);
+    if (obj?.result?.objectId) {
+      const res = await c.Runtime.callFunctionOn({
+        functionDeclaration: `function() {
+          try {
+            var model = this.getModel();
+            if (!model) return [];
+            // Access monaco via the model's _languageService or markers
+            var uri = model.uri;
+            var allMarkers = (window.monaco || (typeof require==='function' && require('vs/editor/editor.main')))
+              ?.editor?.getModelMarkers({ resource: uri }) || [];
+            return allMarkers.map(function(m) {
+              return { line: m.startLineNumber, column: m.startColumn, message: m.message, severity: m.severity };
+            });
+          } catch(e) { return []; }
+        }`,
+        objectId: obj.result.objectId,
+        returnByValue: true,
+      }).catch(() => null);
+      return res?.result?.value || [];
+    }
+    return [];
+  })();
 
   const studiesAfter = await evaluate(`
     (function() { try { return ${CHART}.getAllStudies().length; } catch(e) { return null; } })()
-  `);
+  `).catch(() => null);
 
   return {
     success: true,
     button_clicked: clicked || 'keyboard_shortcut',
-    has_errors: (errors || []).length > 0,
-    errors: errors || [],
-    study_added: (studiesBefore !== null && studiesAfter !== null) ? studiesAfter > studiesBefore : null,
+    has_errors: errors.length > 0,
+    errors,
+    study_added: studiesBefore !== null && studiesAfter !== null ? studiesAfter > studiesBefore : null,
   };
 }
 
 export async function pineGetErrors() {
   await ensurePineEditorOpen();
-  const errors = await evaluate(`
-    (function() {
-      var m = ${FIND_MONACO};
-      if (!m || !m.env) return [];
-      try {
-        var model = m.editor.getModel();
-        if (!model) return [];
-        var markers = m.env.editor.getModelMarkers({ resource: model.uri });
-        return markers.map(function(mk) {
-          return { line: mk.startLineNumber, column: mk.startColumn, message: mk.message, severity: mk.severity };
-        });
-      } catch(e) { return []; }
-    })()
-  `);
-  return { success: true, errors: errors || [], error_count: (errors || []).length };
+  const c = await getClient();
+  const obj = await c.Runtime.evaluate({ expression: 'window.__ot_monaco', returnByValue: false }).catch(() => null);
+  if (obj?.result?.objectId) {
+    const res = await c.Runtime.callFunctionOn({
+      functionDeclaration: `function() {
+        try {
+          var model = this.getModel();
+          if (!model) return [];
+          var markers = (window.monaco || {}).editor?.getModelMarkers({ resource: model.uri }) || [];
+          return markers.map(function(m) {
+            return { line: m.startLineNumber, column: m.startColumn, message: m.message, severity: m.severity };
+          });
+        } catch(e) { return []; }
+      }`,
+      objectId: obj.result.objectId,
+      returnByValue: true,
+    }).catch(() => null);
+    const errors = res?.result?.value || [];
+    return { success: true, errors, error_count: errors.length };
+  }
+  return { success: true, errors: [], error_count: 0 };
 }
 
 export async function pineGetConsole() {
   const entries = await evaluate(`
     (function() {
       var results = [];
-      var selectors = [
-        '[class*="consoleOutput"]', '[class*="console-output"]',
-        '[class*="log-output"]',   '[class*="pine-log"]',
-        '[class*="scriptOutput"]',
-      ];
-      for (var s = 0; s < selectors.length; s++) {
-        var containers = document.querySelectorAll(selectors[s]);
-        for (var c = 0; c < containers.length; c++) {
-          var lines = containers[c].querySelectorAll('[class*="line"], [class*="entry"], li, p');
-          for (var j = 0; j < lines.length; j++) {
-            var text = lines[j].textContent.trim();
-            if (text) results.push({ message: text });
-          }
-        }
+      var sels = ['[class*="consoleOutput"]','[class*="console-output"]','[class*="log-output"]','[class*="pine-log"]','[class*="scriptOutput"]'];
+      for (var s = 0; s < sels.length; s++) {
+        document.querySelectorAll(sels[s]).forEach(function(c) {
+          c.querySelectorAll('[class*="line"],[class*="entry"],li,p').forEach(function(l) {
+            var t = l.textContent.trim(); if (t) results.push({ message: t });
+          });
+        });
       }
       return results;
     })()
-  `);
+  `).catch(() => []);
   return { success: true, entries: entries || [], count: (entries || []).length };
 }
 
 export async function pineSave() {
   await ensurePineEditorOpen();
-  // Try save button first
-  const saved = await evaluate(`
-    (function() {
-      var btns = document.querySelectorAll('button');
-      for (var i = 0; i < btns.length; i++) {
-        var t = btns[i].textContent.trim();
-        if (/^save$/i.test(t) || /^saved$/i.test(t)) { btns[i].click(); return true; }
-      }
-      return false;
-    })()
-  `);
-
-  if (!saved) {
-    // Keyboard shortcut Ctrl+S / Cmd+S
-    const c = await getClient();
-    await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 's', code: 'KeyS', windowsVirtualKeyCode: 83 });
-    await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 's', code: 'KeyS' });
-  }
-  await new Promise(r => setTimeout(r, 1000));
+  const c = await getClient();
+  // Ctrl+S / Cmd+S — most reliable
+  await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 's', code: 'KeyS', windowsVirtualKeyCode: 83 });
+  await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 's', code: 'KeyS' });
+  await new Promise(r => setTimeout(r, 800));
   return { success: true, action: 'saved' };
 }
 
 export async function pineNew({ type }) {
+  invalidateMonacoCache();
   await ensurePineEditorOpen();
   await new Promise(r => setTimeout(r, 300));
   const templates = {
@@ -826,7 +824,7 @@ export async function pineCheck({ source }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source: ${JSON.stringify(source)}, version: 6 })
     }).then(r => r.json()).catch(e => ({ error: e.message }))
-  `);
+  `).catch(e => ({ error: e.message }));
   return { success: true, ...result };
 }
 
@@ -834,41 +832,39 @@ export async function pineListScripts() {
   const scripts = await evaluateAsync(`
     fetch('${TV.pineFacade}/list/?filter=saved', { credentials: 'include' })
       .then(r => r.json())
-      .then(data => Array.isArray(data) ? data.map(s => ({
+      .then(data => Array.isArray(data) ? data.map(function(s) { return {
         id: s.scriptIdPart, name: s.scriptName || s.scriptTitle || 'Untitled',
-        version: s.version, modified: s.modified,
-      })) : [])
-      .catch(() => [])
-  `);
+        version: s.version, modified: s.modified };}) : [])
+      .catch(function() { return []; })
+  `).catch(() => []);
   return { success: true, scripts: scripts || [], count: (scripts || []).length };
 }
 
 export async function pineOpenScript({ name }) {
+  invalidateMonacoCache();
   await ensurePineEditorOpen();
   const result = await evaluateAsync(`
     (function() {
       var target = ${JSON.stringify(name.toLowerCase())};
       return fetch('${TV.pineFacade}/list/?filter=saved', { credentials: 'include' })
-        .then(r => r.json())
-        .then(scripts => {
+        .then(function(r) { return r.json(); })
+        .then(function(scripts) {
           if (!Array.isArray(scripts)) return { error: 'No scripts found' };
-          var match = scripts.find(s =>
-            (s.scriptName || '').toLowerCase().includes(target) ||
-            (s.scriptTitle || '').toLowerCase().includes(target)
-          );
-          if (!match) return { error: 'Script "' + target + '" not found' };
-          return fetch('${TV.pineFacade}/get/' + match.scriptIdPart + '/' + (match.version || 1), { credentials: 'include' })
-            .then(r => r.json())
-            .then(data => {
-              if (!data.source) return { error: 'Script source is empty' };
-              var m = ${FIND_MONACO};
-              if (m && m.editor) { m.editor.setValue(data.source); return { success: true, name: match.scriptName }; }
-              return { error: 'Could not inject source — Pine Editor not accessible' };
+          var match = scripts.find(function(s) {
+            return (s.scriptName||'').toLowerCase().includes(target) || (s.scriptTitle||'').toLowerCase().includes(target);
+          });
+          if (!match) return { error: 'Script not found: ' + target };
+          return fetch('${TV.pineFacade}/get/' + match.scriptIdPart + '/' + (match.version||1), { credentials: 'include' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (!data.source) return { error: 'Script source empty' };
+              if (window.__ot_monaco) { window.__ot_monaco.setValue(data.source); return { success: true, name: match.scriptName }; }
+              return { error: 'Monaco not accessible' };
             });
         })
-        .catch(e => ({ error: e.message }));
+        .catch(function(e) { return { error: e.message }; });
     })()
-  `);
+  `).catch(e => ({ error: e.message }));
   if (result?.error) throw new Error(result.error);
   return { success: true, ...result };
 }

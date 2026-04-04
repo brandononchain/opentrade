@@ -1,42 +1,57 @@
-# OpenTrade
-
 ```
- ___________  _____ _   _ ___________  ___ ______ _____
-|  _  | ___ \/  ___| \ | |_   _| ___ \/ _ \|  _  \  ___|
-| | | | |_/ / `--. | | \| | | | | |_/ / /_\ \ | | | |__
-| | | |  __/ `--. \ .`  | | | |    /|  _  | | | |  __|
-\ \_/ / |   /\__/ / |\  | | | | |\ \| | | | |/ /| |___
- \___/\_|   \____/\_| \_/ \_/ \_| \_\_| |_/___/ \____/
+ _______ ______ _______ _______ _______ ______ _______ _____  _______
+|       |   __ \    ___|    |  |_     _|   __ \   _   |     \|    ___|
+|   -   |    __/    ___|       | |   | |      <       |  --  |    ___|
+|_______|___|  |_______|__|____| |___| |___|__|___|___|_____/|_______|
+
+         Claude-powered TradingView Agent  //  50 Tools  //  Pine Script v6
 ```
 
-**Claude-powered TradingView agent. Fully self-contained — no external repos required.**
-
-Analyze charts, write Pine Script v6, draw levels, manage alerts, run replay practice — all through natural conversation, from your terminal or browser.
+> Talk to your charts. Write Pine Script by asking for it. Control TradingView with plain English.
 
 ---
 
-## How to Use OpenTrade
+## What is OpenTrade?
 
-OpenTrade is a **standalone CLI application** you install once and run from your terminal. It does not require VS Code, Cursor, or any IDE. You talk to it like a chat interface — in your terminal or in a browser window it serves locally.
+OpenTrade puts Claude AI inside your TradingView workflow. It connects to your running TradingView chart via Chrome DevTools Protocol and gives Claude full control — reading indicators, writing and compiling Pine Script, drawing levels, managing alerts, running multi-symbol scans, and practicing trades in replay mode.
 
-### Three ways to interact
+You chat with it in your terminal or browser. It does the rest.
 
-| Interface | How | Best for |
-|-----------|-----|---------|
-| **Terminal chat** | `opentrade` | Power users, scripting, quick commands |
-| **Browser UI** | `opentrade server` → `localhost:7842` | Visual work, seeing screenshots inline |
-| **Single commands** | `opentrade chat "..."` | Automation, shell scripts |
+```
+You:    "Analyze my chart and give me the key levels"
+
+Agent:  ⚡ chart_get_state     → BTCUSDT · 1H · 7 indicators
+        ⚡ quote_get            → last=67,420 change=-1.2%
+        ⚡ data_get_study_values → RSI=38, MACD bearish, EMA 9<21
+        ⚡ data_get_pine_lines  → resistance: 68,100 / support: 66,800
+        ⚡ capture_screenshot   → chart captured
+
+        BTCUSDT 1H Analysis
+        ───────────────────
+        Price: $67,420  |  Change: -1.2%
+
+        Structure: BEARISH — price below all EMAs
+        Momentum:  RSI at 38, approaching oversold
+                   MACD histogram red and expanding
+
+        Key Levels:
+          🔴 Resistance: 68,100  →  69,500
+          🟢 Support:    66,800  →  65,200
+
+        Bias: BEARISH — watching 66,800 for bounce or break
+```
 
 ---
 
-## Install
+## Quick Start
 
-### Prerequisites
-- **Node.js 18+** — [nodejs.org](https://nodejs.org)
-- **TradingView Desktop** — [tradingview.com/desktop](https://www.tradingview.com/desktop/)
-- **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com)
+### 1. Requirements
 
-### 1. Clone and install
+- **Node.js 18+** → [nodejs.org](https://nodejs.org)
+- **Chrome** with TradingView open (see Step 3)
+- **Anthropic API key** → [console.anthropic.com](https://console.anthropic.com)
+
+### 2. Install
 
 ```bash
 git clone https://github.com/brandononchain/opentrade.git
@@ -44,214 +59,202 @@ cd opentrade
 npm install
 ```
 
-### 2. Set your API key
+### 3. Create your `.env` file
 
 ```bash
-# Add to your shell profile (~/.zshrc, ~/.bashrc, etc.) so it persists
-export ANTHROPIC_API_KEY=sk-ant-...
+# In the opentrade folder, create a file called .env
+# Windows PowerShell:
+Add-Content .env "ANTHROPIC_API_KEY=sk-ant-..."
+
+# Mac/Linux:
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 ```
 
-### 3. Install the CLI globally (optional but recommended)
+Your key is never committed — `.env` is in `.gitignore`.
+
+### 4. Launch Chrome pointing at TradingView
 
 ```bash
-npm link
-# Now you can run `opentrade` from anywhere
-```
+# Windows
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\ChromeDebug" "https://www.tradingview.com/chart/"
 
-### 4. Launch TradingView with debug mode
-
-OpenTrade connects to TradingView via Chrome DevTools Protocol on port 9222. You must launch TradingView this way:
-
-```bash
 # Mac
-open -a TradingView --args --remote-debugging-port=9222
-
-# Windows (Command Prompt)
-"%LOCALAPPDATA%\TradingView\TradingView.exe" --remote-debugging-port=9222
-
-# Linux
-tradingview --remote-debugging-port=9222
-
-# Or let OpenTrade launch it for you:
-opentrade chat "launch TradingView in debug mode"
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir="/tmp/ChromeDebug" "https://www.tradingview.com/chart/"
 ```
 
-> **Tip:** Create an alias or shell script so you don't have to type this every time.
-> Mac example: `echo 'alias tv="open -a TradingView --args --remote-debugging-port=9222"' >> ~/.zshrc`
+Log into TradingView when Chrome opens. Keep this window running.
 
----
-
-## Usage
-
-### Interactive terminal chat (recommended)
+### 5. Run OpenTrade
 
 ```bash
-opentrade
+node src/cli/index.js
 ```
 
-Starts a streaming chat session in your terminal with full color output, history, and built-in commands.
-
-```
- ___________  _____ _   _ ___________  ___ ______ _____
-|  _  | ___ \/  ___| \ | |_   _| ___ \/ _ \|  _  \  ___|
-...
-
-✓ TradingView connected  (ES1! · 5)
-
-You › analyze my chart and give me the key levels
-Agent ›
-  ⚡ chart_get_state   {"symbol":"ES1!","resolution":"5"}
-  ✓ symbol=ES1!, resolution=5, studies=7
-  ⚡ quote_get
-  ✓ last=5842.25, change_pct=-0.14%
-  ...
-
-  **ES1! 5-Minute Analysis**
-
-  Price: 5842.25 | Change: -0.14%
-
-  **Key Levels**
-  - 🔴 Resistance: 5868, 5851
-  - 🟢 Support: 5832, 5818
-  ...
-```
-
-**Built-in terminal commands:**
-
-| Command | Action |
-|---------|--------|
-| `/state` | Show current chart symbol and timeframe |
-| `/screenshot` | Capture and save chart screenshot |
-| `/clear` | Clear conversation history |
-| `/quit` | Exit |
+You'll see the banner, a connection confirmation, and a prompt. Start chatting.
 
 ---
+
+## How to Use It
+
+### Terminal (main interface)
+
+```bash
+node src/cli/index.js
+```
+
+Full streaming chat with history. Type naturally — no commands to memorize.
+
+| Shortcut | Action |
+|----------|--------|
+| `/state` | Show current symbol and timeframe |
+| `/screenshot` | Capture chart to PNG |
+| `/clear` | Start a fresh conversation |
+| `/quit` | Exit |
 
 ### Browser UI
 
 ```bash
-opentrade server
-# Open http://localhost:7842 in your browser
+node src/cli/index.js server
+# Open: http://localhost:7842
 ```
 
-The browser UI streams responses in real time, embeds screenshots inline, shows every tool call, and has quick-action buttons for common tasks.
+Same agent, but in your browser. Screenshots appear inline. Tool calls are visible in real time. Good for longer sessions or when you want a bigger workspace.
+
+### Single commands (great for scripting)
+
+```bash
+node src/cli/index.js chat "switch to NVDA on the daily chart"
+node src/cli/index.js chat "what is my RSI reading right now"
+node src/cli/index.js pine "write a VWAP deviation bands indicator"
+node src/cli/index.js screenshot
+node src/cli/index.js health
+```
+
+### Static Pine Script analysis (no TradingView needed)
+
+```bash
+node src/cli/index.js analyze my_strategy.pine
+```
+
+Catches errors before touching the editor — array out-of-bounds, missing declarations, deprecated syntax, missing commission settings.
 
 ---
 
-### Single-command mode
+## Things You Can Ask
 
-```bash
-# Pass a message directly — perfect for shell scripts
-opentrade chat "switch to AAPL on the daily timeframe"
-opentrade chat "what are the RSI and MACD readings right now"
-opentrade chat "write a supertrend indicator and compile it"
+### Chart Reading
+```
+"Analyze my chart"
+"What are the RSI and MACD readings?"
+"Read the key levels from my indicators"
+"Give me a full market breakdown with bias"
+"Take a screenshot"
 ```
 
----
-
-### Pine Script writer
-
-```bash
-opentrade pine "RSI divergence detector with bullish and bearish signals"
+### Chart Control
 ```
-
-Runs the full development loop: write → static analyze → inject → compile → fix errors → screenshot → save. Shows you every step.
-
----
-
-### Static analyzer (no TradingView needed)
-
-```bash
-opentrade analyze my_strategy.pine
-```
-
-Checks your Pine Script file for errors offline — array out-of-bounds, deprecated syntax, missing declarations, and more.
-
----
-
-### Other commands
-
-```bash
-opentrade health      # Check TradingView connection
-opentrade state       # Print current chart state (symbol, TF, studies)
-opentrade screenshot  # Capture chart → saves as PNG
-opentrade help        # Show all commands
-```
-
----
-
-## What You Can Ask
-
-```bash
-# Chart analysis
-"Give me a full analysis of my chart"
-"What are the key support and resistance levels?"
-"What's the RSI reading and is it overbought?"
-"Take a screenshot of my chart"
-
-# Chart control
-"Switch to NVDA on the 1-hour timeframe"
+"Switch to AAPL on the 4-hour chart"
 "Add the Bollinger Bands indicator"
 "Change to Heikin Ashi candles"
-"Scroll back to the January 15th high"
+"Remove all my drawings"
+"Scroll back to the March 2024 highs"
+```
 
-# Pine Script
-"Write a VWAP with standard deviation bands"
-"Build an EMA crossover strategy with proper risk management"
-"Debug this Pine Script: [paste code]"
-"List all my saved Pine Scripts"
-"Open my 'Session Levels' script"
+### Pine Script
+```
+"Write a supertrend strategy with EMA filter"
+"Build a session high/low indicator with alerts"
+"Debug this script: [paste your code]"
+"Add a dashboard table to my indicator"
+"List all my saved scripts"
+"Open my Session Levels script"
+```
 
-# Drawings
-"Draw a horizontal line at 5800"
-"Mark support at 5750 and resistance at 5900"
-"Clear all my drawings"
+### Drawings & Alerts
+```
+"Draw support at 4800 and resistance at 5100"
+"Mark the current price with a horizontal line"
+"Create an alert when price hits 5000"
+"Clear all drawings"
+```
 
-# Alerts
-"Create an alert for when price reaches 6000"
-"Show me all my active alerts"
+### Multi-Symbol Scanning
+```
+"Scan ES, NQ, YM and tell me which is strongest"
+"Take screenshots of AAPL, MSFT, NVDA on daily"
+"Compare RSI across SPY, QQQ, and IWM"
+```
 
-# Multi-symbol
-"Scan ES, NQ, YM, and RTY — which has the strongest momentum?"
-"Take screenshots of AAPL, MSFT, and NVDA on the daily chart"
-
-# Replay
-"Start a replay session from 60 days ago"
+### Replay Practice
+```
+"Start replay from 60 days ago"
 "Step forward 10 bars"
-"Buy 5 contracts at market price"
-"What's my replay P&L?"
+"Buy 5 contracts at market"
+"What's my P&L?"
 "Stop replay and go back to live"
-
-# Watchlist
-"Show me my watchlist"
-"Add SMCI and ARM to my watchlist"
 ```
 
 ---
 
 ## Architecture
 
+OpenTrade is **fully self-contained** — everything is in this repo. No external services, no other repos to clone.
+
 ```
-Your terminal / browser
+Your terminal or browser
         │
         ▼
-  Claude Agent (claude-opus-4-5)
+   Claude AI (via Anthropic API)
+        │  uses 50 tools
+        ▼
+   src/tv/tools.js         ← all TradingView control logic
+   src/tv/connection.js    ← Chrome DevTools Protocol engine
         │
-        ├── src/tv/connection.js  ← CDP engine (connects to TradingView)
-        ├── src/tv/tools.js       ← 50 TradingView control tools
-        ├── src/pine/analyzer.js  ← Pine v6 static analyzer
-        ├── src/pine/templates.js ← Ready-to-use Pine v6 templates
-        └── src/pine/writer.js    ← AI Pine development loop
-                │
-                ▼
-      Chrome DevTools Protocol
-         (localhost:9222)
-                │
-                ▼
-      TradingView Desktop (Electron)
+        ▼
+   Chrome (port 9222)  →  TradingView
 ```
 
-Everything is self-contained in this repo. No other packages, repos, or servers needed beyond `npm install`.
+### What's inside
+
+| File | What it does |
+|------|-------------|
+| `src/tv/connection.js` | Connects to Chrome/TradingView via CDP |
+| `src/tv/tools.js` | All 50 tools — chart, data, Pine, drawings, replay |
+| `src/agent/claude.js` | Streaming Claude agent with tool-use loop |
+| `src/pine/analyzer.js` | Pine Script v6 static analyzer |
+| `src/pine/templates.js` | 6 ready-to-use Pine v6 templates |
+| `src/pine/writer.js` | AI Pine development loop (write→compile→fix→save) |
+| `src/cli/index.js` | Terminal interface |
+| `src/web/server.js` | Browser UI + WebSocket server |
+| `src/env/load.js` | Auto-loads `.env` — no dotenv package needed |
+
+---
+
+## Tools Reference (50 total)
+
+**Chart** — `chart_get_state` `chart_set_symbol` `chart_set_timeframe` `chart_set_type` `chart_manage_indicator` `chart_scroll_to_date`
+
+**Data** — `quote_get` `data_get_study_values` `data_get_ohlcv` `data_get_pine_lines` `data_get_pine_labels` `data_get_pine_tables` `data_get_pine_boxes`
+
+**Pine Script** — `pine_set_source` `pine_smart_compile` `pine_get_errors` `pine_get_console` `pine_save` `pine_new` `pine_check` `pine_list_scripts` `pine_open`
+
+**Visual** — `capture_screenshot` `draw_shape` `draw_list` `draw_clear` `draw_remove_one`
+
+**Alerts** — `alert_create` `alert_list`
+
+**Replay** — `replay_start` `replay_step` `replay_autoplay` `replay_trade` `replay_status` `replay_stop`
+
+**Indicators** — `indicator_set_inputs` `indicator_toggle_visibility`
+
+**Symbols** — `symbol_info` `symbol_search`
+
+**Watchlist** — `watchlist_get` `watchlist_add`
+
+**UI** — `ui_click` `ui_evaluate` `ui_open_panel`
+
+**Batch** — `batch_run`
+
+**System** — `tv_health_check` `tv_launch` `tv_ui_state`
 
 ---
 
@@ -259,34 +262,37 @@ Everything is self-contained in this repo. No other packages, repos, or servers 
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | ✅ Yes | — | Your Anthropic API key |
-| `TV_CDP_PORT` | No | `9222` | TradingView CDP port |
+| `ANTHROPIC_API_KEY` | ✅ | — | Your key from console.anthropic.com |
+| `TV_CDP_PORT` | No | `9222` | Chrome debug port |
 | `TVA_PORT` | No | `7842` | Browser UI port |
 
 ---
 
 ## FAQ
 
-**Do I need VS Code or Cursor?**
-No. OpenTrade is a standalone CLI. It works from any terminal — Terminal.app, iTerm2, Windows Terminal, PowerShell, etc.
+**Do I need VS Code or any IDE?**
+No. OpenTrade is a standalone CLI — run it from any terminal.
 
-**Does it work alongside VS Code / Cursor?**
-Yes. You can run `opentrade` in any terminal tab alongside your IDE. They're completely independent.
+**Does it work on Windows?**
+Yes. Use PowerShell or the VS Code terminal. The `.env` file handles your API key automatically.
 
-**Can I use it as a Claude Code skill?**
-Yes — drop `CLAUDE.md` from this repo into your project and Claude Code will use it as an agent skill automatically.
+**Can I use Edge instead of Chrome?**
+Yes — Edge is Chromium-based and supports the same `--remote-debugging-port` flag.
 
-**Does it require a TradingView subscription?**
-You need TradingView Desktop installed (free download). Some features like saved scripts require a TradingView account.
+**Do I need a TradingView subscription?**
+You need a free TradingView account. Some features (saved scripts, certain indicators) require a paid plan.
 
-**How does the billing work?**
-OpenTrade uses the Anthropic API directly. You pay per token at standard API rates. A typical chart analysis costs ~$0.01–0.03.
+**How much does it cost to run?**
+API costs are usage-based. A typical chart analysis costs roughly $0.01–0.03. Pine Script development with multiple compile cycles might cost $0.05–0.15.
+
+**Is my API key safe?**
+Yes — it stays in your local `.env` file, which is gitignored and never sent anywhere except directly to Anthropic's API.
 
 ---
 
 ## Disclaimer
 
-OpenTrade is an independent project for **personal, educational use only**. Not affiliated with TradingView Inc. or Anthropic. Uses Chrome DevTools Protocol, which may conflict with [TradingView's Terms of Use](https://www.tradingview.com/policies/). You are solely responsible for your usage. Do not use to redistribute data or automate trading.
+OpenTrade is an independent project for personal, educational use only. Not affiliated with TradingView Inc. or Anthropic. Uses Chrome DevTools Protocol, which may conflict with [TradingView's Terms of Use](https://www.tradingview.com/policies/). Use at your own risk.
 
 ## License
 

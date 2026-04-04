@@ -41,14 +41,12 @@ const SYSTEM_PROMPT = `You are OpenTrade, a Claude-powered AI agent with full co
 - ALWAYS use summary:true with data_get_ohlcv
 - ALWAYS use study_filter when targeting specific Pine indicators
 - NEVER call pine_get_source on complex scripts (can be 200KB+)
-- For full analysis: quote_get → data_get_study_values → data_get_pine_lines → data_get_pine_labels → capture_screenshot
+- For full analysis: quote_get -> data_get_study_values -> data_get_pine_lines -> data_get_pine_labels -> capture_screenshot
 
 ## Pine Script v6 Standards
 Every script must start with:
-\`\`\`
 //@version=6
 indicator("Title", overlay=false)  // or strategy() or library()
-\`\`\`
 
 ## Response Style
 - Be concise and action-oriented
@@ -75,26 +73,10 @@ export async function* agentTurn(messages) {
       messages: currentMessages,
     });
 
+    // Yield text blocks immediately
     for (const block of response.content) {
       if (block.type === 'text') {
         yield { type: 'text', text: block.text };
-      } else if (block.type === 'tool_use') {
-        yield { type: 'tool_use', name: block.name, input: block.input, id: block.id };
-
-        let toolResult;
-        try {
-          toolResult = await callTool(block.name, block.input);
-          yield { type: 'tool_result', id: block.id, name: block.name, result: toolResult };
-        } catch (err) {
-          toolResult = { success: false, error: err.message };
-          yield { type: 'tool_error', id: block.id, name: block.name, error: err.message };
-        }
-
-        currentMessages = [
-          ...currentMessages,
-          { role: 'assistant', content: response.content },
-          { role: 'user', content: [{ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(toolResult) }] },
-        ];
       }
     }
 
@@ -102,10 +84,44 @@ export async function* agentTurn(messages) {
       yield { type: 'done', usage: response.usage };
       break;
     }
+
     if (response.stop_reason !== 'tool_use') {
       yield { type: 'done', stop_reason: response.stop_reason };
       break;
     }
+
+    // Collect ALL tool calls from this response, execute them all,
+    // then add one assistant message + one user message with ALL results.
+    // The API requires every tool_use id to have a matching tool_result
+    // in the very next user message — no interleaving allowed.
+    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+    const toolResults = [];
+
+    for (const block of toolUseBlocks) {
+      yield { type: 'tool_use', name: block.name, input: block.input, id: block.id };
+
+      let toolResult;
+      try {
+        toolResult = await callTool(block.name, block.input);
+        yield { type: 'tool_result', id: block.id, name: block.name, result: toolResult };
+      } catch (err) {
+        toolResult = { success: false, error: err.message };
+        yield { type: 'tool_error', id: block.id, name: block.name, error: err.message };
+      }
+
+      toolResults.push({
+        type: 'tool_result',
+        tool_use_id: block.id,
+        content: JSON.stringify(toolResult),
+      });
+    }
+
+    // One assistant turn + one user turn containing ALL tool results
+    currentMessages = [
+      ...currentMessages,
+      { role: 'assistant', content: response.content },
+      { role: 'user', content: toolResults },
+    ];
   }
 }
 

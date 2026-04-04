@@ -55,6 +55,77 @@ function renderText(text) {
     .replace(/^(\d+)\. (.+)$/gm, `  ${C.cyan}$1.${C.reset} $2`);
 }
 
+// ── Stream Pine Script code with typewriter effect ──
+// Called when agent emits text that contains a Pine Script code block
+async function streamPineCode(code, langLabel = 'pine') {
+  const lines = code.split('\n');
+  const totalLines = lines.length;
+
+  // Header
+  process.stdout.write(`\n  ${C.dim}${C.italic} ${langLabel}  (${totalLines} lines)${C.reset}\n`);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Color code Pine Script syntax inline
+    let colored = line
+      .replace(/(\/\/.*)$/, `${C.gray}$1${C.reset}`)               // comments
+      .replace(/\b(indicator|strategy|library|plot|hline|bgcolor|fill|plotshape|label|line|box|table|input|ta|math|str|array|matrix|map|request|ticker|timeframe|alert|runtime|chart)\b/g,
+               `${C.cyan}$1${C.reset}`)                               // builtins
+      .replace(/\b(if|else|for|while|var|varip|float|int|bool|string|color|series|simple|const|export|import|switch|type|method|fun)\b/g,
+               `${C.brightMagenta}$1${C.reset}`)                      // keywords
+      .replace(/"([^"]*)"/g, `${C.yellow}"$1"${C.reset}`)             // strings
+      .replace(/\b(\d+\.?\d*)\b/g, `${C.brightGreen}$1${C.reset}`); // numbers
+
+    process.stdout.write(`  ${C.gray}${String(i+1).padStart(3)}${C.reset}  ${colored}\n`);
+
+    // Typing speed: fast for comment/blank lines, slower for logic
+    const delay = line.trim() === '' || line.trim().startsWith('//')
+      ? 8
+      : line.includes('strategy.') || line.includes('indicator(') || line.includes('strategy(')
+      ? 35
+      : 18;
+    await new Promise(r => setTimeout(r, delay));
+  }
+  process.stdout.write('\n');
+}
+
+// Intercept text output — if it contains a Pine Script block, stream it live
+async function renderAndStream(text) {
+  const pineBlockRe = /\`\`\`(?:pine|pinescript|pine-script)?\n([\s\S]*?)\`\`\`/g;
+  let lastIndex = 0;
+  let match;
+  let hasPine = false;
+
+  // Split on Pine blocks and handle each segment
+  const segments = [];
+  while ((match = pineBlockRe.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ type: 'text', content: text.slice(lastIndex, match.index) });
+    }
+    segments.push({ type: 'pine', content: match[1] });
+    lastIndex = pineBlockRe.lastIndex;
+    hasPine = true;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ type: 'text', content: text.slice(lastIndex) });
+  }
+
+  if (!hasPine) {
+    // No Pine block — render normally
+    process.stdout.write(renderText(text));
+    return;
+  }
+
+  // Render each segment
+  for (const seg of segments) {
+    if (seg.type === 'text' && seg.content.trim()) {
+      process.stdout.write(renderText(seg.content));
+    } else if (seg.type === 'pine') {
+      await streamPineCode(seg.content);
+    }
+  }
+}
+
 function printTool(name, input) {
   const s = JSON.stringify(input);
   console.log(`  ${C.dim}⚡ ${C.yellow}${name}${C.reset} ${C.gray}${s.length>70?s.slice(0,67)+'...':s}${C.reset}`);
@@ -76,7 +147,7 @@ async function runAgent(messages) {
   const { agentTurn } = await import('../agent/claude.js');
   let text = '';
   for await (const ev of agentTurn(messages)) {
-    if (ev.type === 'text') { process.stdout.write(renderText(ev.text)); text += ev.text; }
+    if (ev.type === 'text') { await renderAndStream(ev.text); text += ev.text; }
     else if (ev.type === 'tool_use') { console.log(''); printTool(ev.name, ev.input); }
     else if (ev.type === 'tool_result') { printResult(ev.name, ev.result); }
     else if (ev.type === 'tool_error') { console.log(`  ${C.red}✗ ${ev.name}: ${ev.error}${C.reset}`); }

@@ -21,15 +21,15 @@ function banner() {
   const b = C.brightCyan + C.bold;
   const c = C.cyan + C.bold;
   const d = C.cyan;
-  const r = C.reset;
   const g = C.gray;
   console.log('');
-  console.log(b + ' _______ ______ _______ _______ _______ ______ _______ _____  _______ ' + r);
-  console.log(b + '|       |   __ \    ___|    |  |_     _|   __ \   _   |     \|    ___|' + r);
-  console.log(c + '|   -   |    __/    ___|       | |   | |      <       |  --  |    ___|' + r);
-  console.log(d + '|_______|___|  |_______|__|____| |___| |___|__|___|___|_____/|_______|' + r);
+  console.log(b + ' _______ ______ _______ _______ _______ ______ _______ _____  _______ ' + C.reset);
+  console.log(b + '|       |   __ \\    ___|    |  |_     _|   __ \\   _   |     \\|    ___|' + C.reset);
+  console.log(c + '|   -   |    __/    ___|       | |   | |      <       |  --  |    ___|' + C.reset);
+  console.log(d + '|_______|___|  |_______|__|____| |___| |___|__|___|___|_____/|_______|' + C.reset);
   console.log('');
-  console.log(g + '         Claude-powered TradingView Agent  //  50 Tools  //  Pine Script v6' + r);
+  console.log(g + '    The most powerful open-source TradingView AI agent.' + C.reset);
+  console.log(g + '    50 Tools  //  Pine Script v6  //  Quant + HFT + Hedge Fund Skills' + C.reset);
   console.log('');
 }
 

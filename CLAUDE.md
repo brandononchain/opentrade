@@ -43,13 +43,19 @@ Always return to original timeframe when done.
 
 ### Pine Script Development
 ```
-1. pine_set_source(code)
-2. pine_smart_compile
-3. pine_get_errors
-4. [if errors] fix code, repeat from 1 (max 5 attempts)
-5. capture_screenshot to verify
-6. pine_save
+1. pine_set_source(code)           ← opens editor automatically, DO NOT call pine_new first
+2. pine_smart_compile              ← DO NOT use ui_click to find buttons
+3. pine_get_errors                 ← check immediately after compile
+4. [if errors] fix code → pine_set_source → pine_smart_compile  (max 4 retries)
+5. capture_screenshot              ← verify visually
+6. pine_save                       ← Ctrl+S via CDP
 ```
+
+NEVER DO:
+- pine_new → pine_set_source (redundant, causes double-open)
+- ui_open_panel("pine-editor") before pine_set_source (pine_set_source handles it)
+- ui_evaluate to check editor state (use tv_ui_state if truly needed)
+- loop on ui_open_panel when pine_set_source fails (try once, then stop)
 
 ### Multi-Symbol Operations
 ```

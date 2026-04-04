@@ -1,8 +1,5 @@
 #!/usr/bin/env node
-/**
- * OpenTrade CLI
- * Commands: (none) | chat | pine | analyze | state | screenshot | health | server | help
- */
+import '../env/load.js'; // auto-loads .env from project root
 import { createInterface } from 'node:readline';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';

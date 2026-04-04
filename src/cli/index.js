@@ -18,18 +18,19 @@ const W = Math.min(process.stdout.columns || 100, 120);
 const hr = (ch='─', col=C.dim) => `${col}${ch.repeat(W)}${C.reset}`;
 
 function banner() {
-  console.log([
-    '',
-    `${C.brightCyan}${C.bold} ___________  _____ _   _ ___________  ___ ______ _____ ${C.reset}`,
-    `${C.brightCyan}${C.bold}|  _  | ___ \\/  ___| \\ | |_   _| ___ \\/ _ \\|  _  \\  ___|${C.reset}`,
-    `${C.cyan}${C.bold}| | | | |_/ /\\ \`--.| |\\  | | | | |_/ / /_\\ \\ | | | |__ ${C.reset}`,
-    `${C.cyan}| | | |  __/  \`--. \\ . \` | | | |    /|  _  | | | |  __|${C.reset}`,
-    `${C.blue}${C.bold}\\ \\_/ / |    /\\__/ / |\\  | | | | |\\ \\| | | | |/ /| |___${C.reset}`,
-    `${C.blue} \\___/\\_|    \\____/\\_| \\_/ \\_/ \\_| \\_\\_| |_/___/ \\____/${C.reset}`,
-    '',
-    `${C.gray}  Claude-powered TradingView Agent  •  50 Tools  •  Pine Script v6${C.reset}`,
-    '',
-  ].join('\n'));
+  const b = C.brightCyan + C.bold;
+  const c = C.cyan + C.bold;
+  const d = C.cyan;
+  const r = C.reset;
+  const g = C.gray;
+  console.log('');
+  console.log(b + ' _______ ______ _______ _______ _______ ______ _______ _____  _______ ' + r);
+  console.log(b + '|       |   __ \    ___|    |  |_     _|   __ \   _   |     \|    ___|' + r);
+  console.log(c + '|   -   |    __/    ___|       | |   | |      <       |  --  |    ___|' + r);
+  console.log(d + '|_______|___|  |_______|__|____| |___| |___|__|___|___|_____/|_______|' + r);
+  console.log('');
+  console.log(g + '         Claude-powered TradingView Agent  //  50 Tools  //  Pine Script v6' + r);
+  console.log('');
 }
 
 function spin(label) {

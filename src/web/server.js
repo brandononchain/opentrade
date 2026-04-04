@@ -1,7 +1,4 @@
-/**
- * OpenTrade — Web Server
- * Serves the browser UI and provides WebSocket + HTTP API.
- */
+import '../env/load.js'; // auto-loads .env from project root
 import { createServer } from 'node:http';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

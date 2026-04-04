@@ -5,26 +5,25 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { callTool, getTools, connect } from '../mcp/client.js';
 
-const MODEL = 'claude-opus-4-5-20251101';
+const MODEL = 'claude-sonnet-4-20250514';
 
-const SYSTEM_PROMPT = `You are OpenTrade, a Claude-powered AI agent with full control over TradingView Desktop via 50 embedded tools. You help traders analyze charts, write Pine Script v6, manage alerts, practice with replay, and automate workflows.
+const SYSTEM_PROMPT = `You are OpenTrade, a Claude-powered AI agent with full control over TradingView via 50 embedded tools. You help traders analyze charts, write Pine Script v6, manage alerts, practice with replay, and automate workflows.
 
 ## Core Capabilities
 
 ### Chart Analysis
 - Read live chart state: symbol, timeframe, indicator values
-- Pull Pine indicator data: lines, labels, tables, boxes (support/resistance, session levels, bias annotations)
+- Pull Pine indicator data: lines, labels, tables, boxes
 - Get OHLCV price data, real-time quotes
 - Take screenshots for visual verification
 
 ### Pine Script v6 Development (Full Loop)
 1. Write complete, valid Pine Script v6 code
-2. Run static analysis (catches array OOB, deprecated syntax, missing declarations)
-3. Inject into TradingView with pine_set_source
-4. Compile with pine_smart_compile
-5. Read errors with pine_get_errors — fix and recompile (up to 5 attempts)
-6. Verify with capture_screenshot
-7. Save with pine_save
+2. Inject into TradingView with pine_set_source
+3. Compile with pine_smart_compile
+4. Read errors with pine_get_errors — fix and recompile (up to 5 attempts)
+5. Verify with capture_screenshot
+6. Save with pine_save
 
 ### Chart Control
 - Change symbols, timeframes, chart types
@@ -32,7 +31,7 @@ const SYSTEM_PROMPT = `You are OpenTrade, a Claude-powered AI agent with full co
 - Draw trend lines, support/resistance levels, text annotations
 - Manage alerts, watchlists
 
-### Batch & Replay
+### Batch and Replay
 - Scan multiple symbols simultaneously with batch_run
 - Enter historical replay at any date, step bars, simulate trades
 
@@ -41,12 +40,10 @@ const SYSTEM_PROMPT = `You are OpenTrade, a Claude-powered AI agent with full co
 - ALWAYS use summary:true with data_get_ohlcv
 - ALWAYS use study_filter when targeting specific Pine indicators
 - NEVER call pine_get_source on complex scripts (can be 200KB+)
-- For full analysis: quote_get -> data_get_study_values -> data_get_pine_lines -> data_get_pine_labels -> capture_screenshot
+- For full analysis: quote_get then data_get_study_values then data_get_pine_lines then data_get_pine_labels then capture_screenshot
 
 ## Pine Script v6 Standards
-Every script must start with:
-//@version=6
-indicator("Title", overlay=false)  // or strategy() or library()
+Every script must start with //@version=6 and have a proper indicator(), strategy(), or library() declaration.
 
 ## Response Style
 - Be concise and action-oriented
@@ -73,13 +70,14 @@ export async function* agentTurn(messages) {
       messages: currentMessages,
     });
 
-    // Yield text blocks immediately
+    // Yield all text blocks first
     for (const block of response.content) {
       if (block.type === 'text') {
         yield { type: 'text', text: block.text };
       }
     }
 
+    // If no tool calls, we are done
     if (response.stop_reason === 'end_turn') {
       yield { type: 'done', usage: response.usage };
       break;
@@ -90,12 +88,12 @@ export async function* agentTurn(messages) {
       break;
     }
 
-    // Collect ALL tool calls from this response, execute them all,
-    // then add one assistant message + one user message with ALL results.
-    // The API requires every tool_use id to have a matching tool_result
-    // in the very next user message — no interleaving allowed.
+    // CRITICAL: collect ALL tool_use blocks from this response,
+    // execute each one, and return ALL results in a single user message.
+    // The Anthropic API requires every tool_use id to have a matching
+    // tool_result in the immediately following user message — no exceptions.
     const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-    const toolResults = [];
+    const toolResultContents = [];
 
     for (const block of toolUseBlocks) {
       yield { type: 'tool_use', name: block.name, input: block.input, id: block.id };
@@ -109,18 +107,18 @@ export async function* agentTurn(messages) {
         yield { type: 'tool_error', id: block.id, name: block.name, error: err.message };
       }
 
-      toolResults.push({
+      toolResultContents.push({
         type: 'tool_result',
         tool_use_id: block.id,
         content: JSON.stringify(toolResult),
       });
     }
 
-    // One assistant turn + one user turn containing ALL tool results
+    // Append one assistant turn (the full response) + one user turn (all results)
     currentMessages = [
       ...currentMessages,
       { role: 'assistant', content: response.content },
-      { role: 'user', content: toolResults },
+      { role: 'user', content: toolResultContents },
     ];
   }
 }
@@ -139,6 +137,8 @@ export async function agentChat(userMessage, history = []) {
   return {
     text: fullText,
     toolCalls,
-    newMessages: [...messages, { role: 'assistant', content: fullText }],
+    // Return proper message history — assistant content must be the raw response
+    // content array, not just the text string, so subsequent turns work correctly.
+    newMessages: [...messages, { role: 'assistant', content: fullText || ' ' }],
   };
 }

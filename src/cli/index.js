@@ -29,7 +29,56 @@ function banner() {
   console.log(d + '|_______|___|  |_______|__|____| |___| |___|__|___|___|_____/|_______|' + C.reset);
   console.log('');
   console.log(g + '    The most powerful open-source TradingView AI agent.' + C.reset);
-  console.log(g + '    50 Tools  //  Pine Script v6  //  Quant + HFT + Hedge Fund Skills' + C.reset);
+  console.log(g + '    50 Tools  //  6 Providers  //  15 Models  //  Pine Script v6' + C.reset);
+  console.log('');
+}
+
+function showActiveModel() {
+  try {
+    const { getActiveModelAlias, getModel } = require('../agent/models.js');
+    const alias = getActiveModelAlias();
+    const m = getModel(alias);
+    const tierColors = { flagship: C.brightMagenta, balanced: C.brightCyan, fast: C.brightGreen, budget: C.green };
+    const tc = tierColors[m.tier] || C.gray;
+    console.log(`  ${C.gray}Model:${C.reset} ${C.bold}${m.displayName}${C.reset} ${C.gray}(${alias})${C.reset}  ${tc}${m.tier}${C.reset}  ${C.gray}ctx:${(m.context/1000).toFixed(0)}K${C.reset}`);
+  } catch { /* models not loaded yet */ }
+}
+
+async function showActiveModelAsync() {
+  try {
+    const { getActiveModelAlias, getModel } = await import('../agent/models.js');
+    const alias = getActiveModelAlias();
+    const m = getModel(alias);
+    const tierColors = { flagship: C.brightMagenta, balanced: C.brightCyan, fast: C.brightGreen, budget: C.green };
+    const tc = tierColors[m.tier] || C.gray;
+    console.log(`  ${C.gray}Model:${C.reset} ${C.bold}${m.displayName}${C.reset} ${C.gray}(${alias})${C.reset}  ${tc}${m.tier}${C.reset}  ${C.gray}ctx:${(m.context/1000).toFixed(0)}K${C.reset}`);
+  } catch { /* models not loaded yet */ }
+}
+
+async function showModelsTable() {
+  const { listModels } = await import('../agent/models.js');
+  const { getActiveModelAlias } = await import('../agent/models.js');
+  const active = getActiveModelAlias();
+  const tiers = ['flagship', 'balanced', 'fast'];
+  const tierLabels = { flagship: 'Flagship', balanced: 'Balanced', fast: 'Fast' };
+  const tierColors = { flagship: C.brightMagenta, balanced: C.brightCyan, fast: C.brightGreen };
+
+  console.log('');
+  for (const tier of tiers) {
+    const models = listModels({ tier });
+    if (!models.length) continue;
+    const tc = tierColors[tier] || C.gray;
+    console.log(`  ${tc}${C.bold}${tierLabels[tier]}${C.reset}`);
+    for (const m of models) {
+      const isActive = m.alias === active;
+      const marker = isActive ? `${C.green} *${C.reset}` : '  ';
+      const name = isActive ? `${C.bold}${m.displayName}${C.reset}` : m.displayName;
+      const cost = `$${m.costPer1kInput}/$${m.costPer1kOutput}`;
+      console.log(`  ${marker} ${C.cyan}${m.alias.padEnd(18)}${C.reset} ${name.padEnd(isActive ? 40 : 22)} ${C.gray}${m.provider.padEnd(10)} ${(m.context/1000).toFixed(0).padStart(5)}K  ${cost}${C.reset}`);
+    }
+    console.log('');
+  }
+  console.log(`  ${C.gray}Set LLM_MODEL in .env to switch. Active model marked with ${C.green}*${C.reset}`);
   console.log('');
 }
 
@@ -147,7 +196,11 @@ async function runAgent(messages) {
   const { agentTurn } = await import('../agent/claude.js');
   let text = '';
   for await (const ev of agentTurn(messages)) {
-    if (ev.type === 'text') { await renderAndStream(ev.text); text += ev.text; }
+    if (ev.type === 'model_info') {
+      console.log(`  ${C.gray}Using ${C.reset}${C.bold}${ev.displayName}${C.reset} ${C.gray}(${ev.provider})${C.reset}`);
+      console.log('');
+    }
+    else if (ev.type === 'text') { await renderAndStream(ev.text); text += ev.text; }
     else if (ev.type === 'tool_use') { console.log(''); printTool(ev.name, ev.input); }
     else if (ev.type === 'tool_result') { printResult(ev.name, ev.result); }
     else if (ev.type === 'tool_error') { console.log(`  ${C.red}✗ ${ev.name}: ${ev.error}${C.reset}`); }
@@ -157,8 +210,9 @@ async function runAgent(messages) {
 
 async function interactiveChat() {
   banner();
+  await showActiveModelAsync();
   console.log(hr());
-  console.log(`${C.gray}  Commands: ${C.cyan}/quit /clear /screenshot /state /help${C.reset}`);
+  console.log(`${C.gray}  Commands: ${C.cyan}/quit /clear /screenshot /state /models /help${C.reset}`);
   console.log(hr());
   console.log('');
 
@@ -215,7 +269,13 @@ async function interactiveChat() {
       console.log(`\n  ${C.cyan}/quit${C.reset}        Exit`);
       console.log(`  ${C.cyan}/clear${C.reset}       Clear history`);
       console.log(`  ${C.cyan}/state${C.reset}       Chart state`);
-      console.log(`  ${C.cyan}/screenshot${C.reset}  Capture chart\n`);
+      console.log(`  ${C.cyan}/screenshot${C.reset}  Capture chart`);
+      console.log(`  ${C.cyan}/models${C.reset}      List all LLMs\n`);
+      prompt(); return;
+    }
+
+    if (msg === '/models') {
+      await showModelsTable();
       prompt(); return;
     }
 
@@ -258,8 +318,15 @@ async function main() {
     console.log(`  ${C.brightCyan}opentrade analyze${C.reset} <file.pine>  Static analysis`);
     console.log(`  ${C.brightCyan}opentrade state${C.reset}                Chart state`);
     console.log(`  ${C.brightCyan}opentrade screenshot${C.reset}           Capture chart`);
+    console.log(`  ${C.brightCyan}opentrade models${C.reset}               List all supported LLMs`);
     console.log(`  ${C.brightCyan}opentrade health${C.reset}               Connection check`);
     console.log(`  ${C.brightCyan}opentrade server${C.reset}               Browser UI at :7842\n`);
+    return;
+  }
+
+  if (cmd === 'models') {
+    banner();
+    await showModelsTable();
     return;
   }
 

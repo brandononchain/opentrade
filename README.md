@@ -10,11 +10,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)](https://nodejs.org)
 [![Pine Script](https://img.shields.io/badge/Pine%20Script-v6-blue.svg)](https://www.tradingview.com/pine-script-docs/)
-[![Claude](https://img.shields.io/badge/Powered%20by-Claude%20AI-purple.svg)](https://anthropic.com)
+[![Multi-LLM](https://img.shields.io/badge/LLMs-6%20Providers%20%C2%B7%2015%20Models-blueviolet.svg)](#supported-models)
 
 📚 **[Full Documentation](docs/Home.md)** · [Installation](docs/Installation.md) · [Tools Reference](docs/Tools-Reference.md) · [Quant Standards](docs/Quant-Standards.md) · [Roadmap](docs/Roadmap.md)
 
-> OpenTrade connects Claude AI to your live TradingView charts via Chrome DevTools Protocol. It reads your indicators, writes and compiles Pine Script, runs multi-symbol scans, executes quantitative analysis, and structures trades the way a hedge fund PM would — all through natural conversation.
+> OpenTrade connects frontier AI models to your live TradingView charts via Chrome DevTools Protocol. It reads your indicators, writes and compiles Pine Script, runs multi-symbol scans, executes quantitative analysis, and structures trades the way a hedge fund PM would — all through natural conversation. Choose from **15 models across 6 providers** — Claude, GPT, Gemini, Qwen, DeepSeek, and MiniMax.
 
 ---
 
@@ -25,7 +25,8 @@ Most "AI trading tools" are wrappers around chart screenshots or paper-thin APIs
 - **Direct TradingView control** — reads every indicator value, every Pine drawing, every price level from your actual live chart
 - **Writes and compiles real Pine Script** — not code snippets, but production-ready strategies that compile, run in the backtester, and get saved to your TradingView account
 - **Institutional-grade analysis skills** — quantitative regime detection, Kelly Criterion position sizing, HFT microstructure, multi-timeframe hedge fund workflows
-- **Fully self-contained** — one repo, `npm install`, done. No external services, no other repos, no subscriptions beyond Anthropic API
+- **6 AI providers, 15 models** — Claude, GPT, Gemini, Qwen, DeepSeek, MiniMax — switch with one env var
+- **Fully self-contained** — one repo, `npm install`, done. No external services, no other repos, no subscriptions beyond your chosen LLM API
 
 ---
 
@@ -37,9 +38,16 @@ cd opentrade
 npm install
 ```
 
-Create `.env` in the project folder:
+Create `.env` in the project folder (see [`.env.example`](.env.example) for all options):
 ```
+LLM_MODEL=claude-sonnet
 ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Or use a different provider:
+```
+LLM_MODEL=qwen-max
+QWEN_API_KEY=sk-...
 ```
 
 Launch Chrome pointing at TradingView:
@@ -317,14 +325,68 @@ Full AI development loop: write → static analysis → inject → compile → f
 
 ---
 
+## Supported Models
+
+Set `LLM_MODEL` in your `.env` to any alias below. Only the API key for that provider is required.
+
+### Flagship (Deep analysis, complex tool chains)
+| Alias | Model | Provider | Context | Cost/1K tok |
+|-------|-------|----------|---------|-------------|
+| `claude-opus` | Claude Opus 4 | Anthropic | 1M | $0.015 / $0.075 |
+| `o3` | OpenAI o3 | OpenAI | 200K | $0.002 / $0.008 |
+| `gemini-2.5-pro` | Gemini 2.5 Pro | Google | 1M | $0.001 / $0.010 |
+| `qwen-max` | Qwen-Max | Alibaba | 256K | $0.002 / $0.006 |
+| `deepseek-reasoner` | DeepSeek R1 | DeepSeek | 128K | $0.001 / $0.002 |
+
+### Balanced (Daily driver, good cost/quality)
+| Alias | Model | Provider | Context | Cost/1K tok |
+|-------|-------|----------|---------|-------------|
+| `claude-sonnet` | Claude Sonnet 4 | Anthropic | 1M | $0.003 / $0.015 |
+| `gpt-4.1` | GPT-4.1 | OpenAI | 1M | $0.002 / $0.008 |
+| `o4-mini` | OpenAI o4-mini | OpenAI | 200K | $0.001 / $0.004 |
+| `qwen-plus` | Qwen-Plus | Alibaba | 131K | $0.001 / $0.002 |
+| `deepseek-chat` | DeepSeek V3 | DeepSeek | 128K | $0.000 / $0.001 |
+| `minimax` | MiniMax M1 | MiniMax | 1M | $0.000 / $0.001 |
+
+### Fast (Speed & low cost, simple tasks)
+| Alias | Model | Provider | Context | Cost/1K tok |
+|-------|-------|----------|---------|-------------|
+| `claude-haiku` | Claude Haiku 4 | Anthropic | 200K | $0.001 / $0.005 |
+| `gpt-4.1-mini` | GPT-4.1 Mini | OpenAI | 1M | $0.000 / $0.002 |
+| `gemini-2.5-flash` | Gemini 2.5 Flash | Google | 1M | $0.000 / $0.001 |
+| `qwen-turbo` | Qwen-Turbo | Alibaba | 1M | $0.000 / $0.001 |
+
+### Get API Keys
+| Provider | Sign up |
+|----------|---------|
+| Anthropic (Claude) | [console.anthropic.com](https://console.anthropic.com) |
+| OpenAI (GPT, o-series) | [platform.openai.com](https://platform.openai.com/api-keys) |
+| Google (Gemini) | [aistudio.google.com](https://aistudio.google.com/apikey) |
+| Alibaba (Qwen) | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
+| DeepSeek | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
+| MiniMax | [minimaxi.chat](https://www.minimaxi.chat) |
+
+---
+
 ## Architecture
 
 ```
 Your terminal / browser
         │
         ▼
-   Claude AI  (claude-sonnet via Anthropic API)
-        │  routes to the right skill automatically
+   Provider Abstraction Layer  (src/agent/providers/)
+        │  routes to the configured LLM automatically
+        │
+        ├── Anthropic  → Claude Opus / Sonnet / Haiku
+        ├── OpenAI     → GPT-4.1 / o3 / o4-mini
+        ├── Google     → Gemini 2.5 Pro / Flash
+        ├── Qwen       → Qwen-Max / Plus / Turbo
+        ├── DeepSeek   → V3 / R1
+        └── MiniMax    → M1
+                │
+                ▼
+   Agent Loop  (src/agent/claude.js)
+        │  selects skill, orchestrates tool calls
         │
         ├── chart-analysis      (7 tools in sequence)
         ├── quant-analysis      (200-bar stats engine)
@@ -342,7 +404,7 @@ Your terminal / browser
    Chrome :9222 → TradingView (live charts)
 ```
 
-Everything runs in your local environment. No cloud dependency except the Anthropic API call.
+Everything runs in your local environment. No cloud dependency except your chosen LLM API.
 
 ---
 
@@ -352,7 +414,7 @@ Everything runs in your local environment. No cloud dependency except the Anthro
 - Node.js 18+ — [nodejs.org](https://nodejs.org)
 - Chrome — [google.com/chrome](https://google.com/chrome)
 - TradingView account — [tradingview.com](https://tradingview.com)
-- Anthropic API key — [console.anthropic.com](https://console.anthropic.com)
+- API key for at least one provider — see [Supported Models](#supported-models)
 
 ### Install
 ```bash
@@ -362,12 +424,19 @@ npm install
 ```
 
 ### Configure
-Create `.env` in the project root:
+Copy `.env.example` and fill in your chosen provider's API key:
+```bash
+cp .env.example .env
 ```
+
+```
+LLM_MODEL=claude-sonnet
 ANTHROPIC_API_KEY=sk-ant-...
 TV_CDP_PORT=9222
 TVA_PORT=7842
 ```
+
+Only set the API key for the provider you're using. See [`.env.example`](.env.example) for the full list.
 
 ### Launch TradingView in Chrome
 ```bash
@@ -434,13 +503,13 @@ node src/cli/index.js server   # browser UI at localhost:7842
 
 The goal is to make OpenTrade the most powerful open-source TradingView agent ever built. Planned additions:
 
+- **Tiered model routing** — automatically use cheap models for simple tool dispatches and flagship models for complex analysis
 - **Options flow integration** — read implied vol, skew, put/call ratio from TradingView options chain
 - **Alert automation** — trigger Pine Script alerts → webhook → external execution
 - **Pairs trading skill** — statistical arbitrage setup detection and spread monitoring
 - **Order flow imbalance** — footprint chart reading and delta analysis
 - **Multi-chart layout** — simultaneous analysis across multiple chart panes
 - **Portfolio P&L tracking** — track paper trades made through replay across sessions
-- **Claude Code integration** — use as a skill inside Claude Code for workflow automation
 - **Web scraping layer** — pull earnings dates, economic calendar, insider flow to enrich analysis
 
 Pull requests welcome.
@@ -451,7 +520,13 @@ Pull requests welcome.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | ✅ | — | From console.anthropic.com |
+| `LLM_MODEL` | No | `claude-sonnet` | Model alias — see [Supported Models](#supported-models) |
+| `ANTHROPIC_API_KEY` | If using Claude | — | [console.anthropic.com](https://console.anthropic.com) |
+| `OPENAI_API_KEY` | If using GPT/o-series | — | [platform.openai.com](https://platform.openai.com/api-keys) |
+| `GOOGLE_API_KEY` | If using Gemini | — | [aistudio.google.com](https://aistudio.google.com/apikey) |
+| `QWEN_API_KEY` | If using Qwen | — | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
+| `DEEPSEEK_API_KEY` | If using DeepSeek | — | [platform.deepseek.com](https://platform.deepseek.com/api_keys) |
+| `MINIMAX_API_KEY` | If using MiniMax | — | [minimaxi.chat](https://www.minimaxi.chat) |
 | `TV_CDP_PORT` | No | `9222` | Chrome debug port |
 | `TVA_PORT` | No | `7842` | Browser UI port |
 
@@ -469,19 +544,22 @@ Yes — Edge is Chromium-based and supports the same `--remote-debugging-port` f
 Free account works. Saved scripts and some indicators require a paid plan.
 
 **How much does it cost?**
-API costs are per-token. A full chart analysis costs ~$0.01–0.03. A complete backtest workflow with multiple compile cycles runs $0.05–0.20.
+Depends on your chosen model. With DeepSeek V3, a full chart analysis costs under $0.001. With Claude Sonnet, ~$0.01–0.03. A complete backtest workflow runs $0.01–0.20 depending on the model.
 
 **Is my API key secure?**
-It stays in your local `.env` file, gitignored, and only sent directly to Anthropic's API.
+It stays in your local `.env` file, gitignored, and only sent directly to your chosen provider's API.
 
 **Can I run this on a cloud server?**
-The Anthropic API calls can run anywhere. TradingView requires Chrome running with CDP enabled — on a cloud VM you'd need Xvfb (virtual display) to run Chrome headlessly.
+The LLM API calls can run anywhere. TradingView requires Chrome running with CDP enabled — on a cloud VM you'd need Xvfb (virtual display) to run Chrome headlessly.
+
+**Can I switch models mid-session?**
+Change `LLM_MODEL` in your `.env` and restart the agent. All 15 models use the same tool interface — your workflow doesn't change.
 
 ---
 
 ## Disclaimer
 
-OpenTrade is an independent project for personal, educational use only. Not affiliated with TradingView Inc. or Anthropic. Using Chrome DevTools Protocol to automate TradingView may conflict with [TradingView's Terms of Use](https://www.tradingview.com/policies/). Nothing here is financial advice. Use at your own risk.
+OpenTrade is an independent project for personal, educational use only. Not affiliated with TradingView Inc., Anthropic, OpenAI, Google, Alibaba, DeepSeek, or MiniMax. Using Chrome DevTools Protocol to automate TradingView may conflict with [TradingView's Terms of Use](https://www.tradingview.com/policies/). Nothing here is financial advice. Use at your own risk.
 
 ## License
 

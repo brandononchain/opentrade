@@ -1,11 +1,11 @@
 /**
- * OpenTrade — Claude AI Agent
+ * OpenTrade — Multi-LLM AI Agent
  * Streaming agent with full TradingView tool access via embedded CDP engine.
+ * Supports: Claude, GPT, Gemini, Qwen, DeepSeek, MiniMax — switchable via LLM_MODEL env.
  */
-import Anthropic from '@anthropic-ai/sdk';
+import { getProvider } from './providers/index.js';
+import { getActiveModelAlias, getModel, listModels } from './models.js';
 import { callTool, getTools, connect } from '../mcp/client.js';
-
-const MODEL = 'claude-sonnet-4-20250514';
 
 const SYSTEM_PROMPT = `You are OpenTrade, a Claude-powered AI agent for professional traders. You have full control over TradingView via 50 embedded tools and deep expertise in quantitative analysis, hedge fund strategy, high-frequency trading microstructure, and systematic Pine Script development.
 
@@ -95,23 +95,27 @@ Quant: zscore_mean_reversion, vwap_institutional, momentum_factor, opening_range
 - Always provide specific entry/stop/target prices, never vague zones
 - For quant output, show the math clearly`;
 
-export async function* agentTurn(messages) {
-  const client = new Anthropic();
-  const claudeTools = (await getTools()).map(t => ({
+export async function* agentTurn(messages, modelOverride) {
+  const alias = modelOverride || getActiveModelAlias();
+  const { provider, model: modelConfig } = getProvider(alias);
+
+  const rawTools = (await getTools()).map(t => ({
     name: t.name,
     description: t.description,
     input_schema: t.inputSchema || { type: 'object', properties: {} },
   }));
 
+  yield { type: 'model_info', alias, displayName: modelConfig.displayName, provider: modelConfig.provider };
+
   let currentMessages = [...messages];
 
   while (true) {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 8096,
+    const response = await provider.chatCompletion({
+      model: modelConfig.model,
       system: SYSTEM_PROMPT,
-      tools: claudeTools,
       messages: currentMessages,
+      tools: rawTools,
+      maxTokens: Math.min(modelConfig.maxOutput || 8096, 8096),
     });
 
     for (const block of response.content) {
@@ -161,13 +165,13 @@ export async function* agentTurn(messages) {
   }
 }
 
-export async function agentChat(userMessage, history = []) {
+export async function agentChat(userMessage, history = [], modelOverride) {
   await connect();
   const messages = [...history, { role: 'user', content: userMessage }];
   let fullText = '';
   const toolCalls = [];
 
-  for await (const event of agentTurn(messages)) {
+  for await (const event of agentTurn(messages, modelOverride)) {
     if (event.type === 'text') fullText += event.text;
     if (event.type === 'tool_use') toolCalls.push({ name: event.name, input: event.input });
   }
@@ -178,3 +182,6 @@ export async function agentChat(userMessage, history = []) {
     newMessages: [...messages, { role: 'assistant', content: fullText || ' ' }],
   };
 }
+
+/** List all available models for display in CLI/UI. */
+export { listModels, getModel, getActiveModelAlias } from './models.js';

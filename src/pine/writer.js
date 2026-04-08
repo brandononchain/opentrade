@@ -1,12 +1,26 @@
 /**
  * Pine Script AI Writer
  * Multi-turn AI-driven Pine Script development with automatic compile-fix loop.
- * Uses Claude to write, analyze, fix, and verify Pine Script v6.
+ * Uses configurable LLM provider to write, analyze, fix, and verify Pine Script v6.
  */
-import Anthropic from '@anthropic-ai/sdk';
+import { getProvider } from '../agent/providers/index.js';
+import { getActiveModelAlias } from '../agent/models.js';
 import { pine, capture } from '../mcp/client.js';
 import { analyzeStatic, developScript } from './analyzer.js';
 import { getTemplate, listTemplates } from './templates.js';
+
+/** Simple completion helper — returns text content from any configured LLM. */
+async function llmComplete(system, messages, maxTokens = 4096) {
+  const { provider, model: modelConfig } = getProvider(getActiveModelAlias());
+  const response = await provider.chatCompletion({
+    model: modelConfig.model,
+    system,
+    messages,
+    maxTokens,
+  });
+  const textBlock = response.content.find(b => b.type === 'text');
+  return textBlock?.text || '';
+}
 
 const PINE_SYSTEM = `You are an expert Pine Script v6 developer. Your job is to write, analyze, and fix Pine Script code.
 
@@ -50,8 +64,6 @@ export async function writePineScript(prompt, opts = {}) {
     compileInTV = true,
   } = opts;
 
-  const client = new Anthropic();
-
   // Step 1: Generate initial code
   log('🤖 Writing Pine Script...');
 
@@ -83,14 +95,7 @@ Requirements:
     });
   }
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 4096,
-    system: PINE_SYSTEM,
-    messages,
-  });
-
-  let source = response.content[0].text.trim();
+  let source = (await llmComplete(PINE_SYSTEM, messages)).trim();
 
   // Clean up if Claude wrapped in markdown (shouldn't happen but just in case)
   source = source.replace(/^```\w*\n?/, '').replace(/\n?```$/, '').trim();
@@ -114,14 +119,9 @@ Requirements:
       },
     ];
 
-    const fixResponse = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      system: PINE_SYSTEM,
-      messages: fixMessages,
-    });
+    const fixText = await llmComplete(PINE_SYSTEM, fixMessages);
 
-    source = fixResponse.content[0].text.trim()
+    source = fixText.trim()
       .replace(/^```\w*\n?/, '').replace(/\n?```$/, '').trim();
     log('✅ Static issues fixed');
   }
@@ -187,16 +187,11 @@ Requirements:
         .map(e => `Line ${e.line}: ${e.message}`)
         .join('\n');
 
-      const fixResponse = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4096,
-        system: PINE_SYSTEM,
-        messages: [
-          { role: 'user', content: `Fix these Pine Script compilation errors:\n\n${errorContext}\n\nOriginal code:\n${currentSource}\n\nOutput ONLY the corrected Pine Script.` },
-        ],
-      });
+      const fixText = await llmComplete(PINE_SYSTEM, [
+        { role: 'user', content: `Fix these Pine Script compilation errors:\n\n${errorContext}\n\nOriginal code:\n${currentSource}\n\nOutput ONLY the corrected Pine Script.` },
+      ]);
 
-      currentSource = fixResponse.content[0].text.trim()
+      currentSource = fixText.trim()
         .replace(/^```\w*\n?/, '').replace(/\n?```$/, '').trim();
     }
 
@@ -217,21 +212,14 @@ Requirements:
  * Takes existing source + error messages and returns fixed code.
  */
 export async function debugPineScript(source, errors) {
-  const client = new Anthropic();
-
   const errorStr = errors.map(e => `Line ${e.line || '?'}: ${e.message}`).join('\n');
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 4096,
-    system: PINE_SYSTEM,
-    messages: [{
-      role: 'user',
-      content: `Debug and fix this Pine Script. Here are the compilation errors:\n\n${errorStr}\n\nHere is the source:\n\n${source}\n\nOutput ONLY the corrected Pine Script code.`,
-    }],
-  });
+  const text = await llmComplete(PINE_SYSTEM, [{
+    role: 'user',
+    content: `Debug and fix this Pine Script. Here are the compilation errors:\n\n${errorStr}\n\nHere is the source:\n\n${source}\n\nOutput ONLY the corrected Pine Script code.`,
+  }]);
 
-  let fixed = response.content[0].text.trim()
+  let fixed = text.trim()
     .replace(/^```\w*\n?/, '').replace(/\n?```$/, '').trim();
 
   return {
@@ -244,17 +232,12 @@ export async function debugPineScript(source, errors) {
  * Explain what a Pine Script does in plain English.
  */
 export async function explainPineScript(source) {
-  const client = new Anthropic();
-
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2048,
-    system: 'You are a Pine Script expert. Explain Pine Script code clearly and concisely for traders.',
-    messages: [{
+  return await llmComplete(
+    'You are a Pine Script expert. Explain Pine Script code clearly and concisely for traders.',
+    [{
       role: 'user',
       content: `Explain what this Pine Script indicator/strategy does:\n\n${source}\n\nProvide:\n1. What it does in 1-2 sentences\n2. Key parameters and their defaults\n3. What signals/plots it generates\n4. Ideal use cases`,
     }],
-  });
-
-  return response.content[0].text;
+    2048,
+  );
 }

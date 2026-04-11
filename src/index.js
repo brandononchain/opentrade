@@ -27,9 +27,6 @@ export {
   indicators,
   watchlist,
   ui,
-  panes,
-  tabs,
-  layouts,
   batch,
 } from './mcp/client.js';
 

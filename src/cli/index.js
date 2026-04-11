@@ -33,17 +33,6 @@ function banner() {
   console.log('');
 }
 
-function showActiveModel() {
-  try {
-    const { getActiveModelAlias, getModel } = require('../agent/models.js');
-    const alias = getActiveModelAlias();
-    const m = getModel(alias);
-    const tierColors = { flagship: C.brightMagenta, balanced: C.brightCyan, fast: C.brightGreen, budget: C.green };
-    const tc = tierColors[m.tier] || C.gray;
-    console.log(`  ${C.gray}Model:${C.reset} ${C.bold}${m.displayName}${C.reset} ${C.gray}(${alias})${C.reset}  ${tc}${m.tier}${C.reset}  ${C.gray}ctx:${(m.context/1000).toFixed(0)}K${C.reset}`);
-  } catch { /* models not loaded yet */ }
-}
-
 async function showActiveModelAsync() {
   try {
     const { getActiveModelAlias, getModel } = await import('../agent/models.js');

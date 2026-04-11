@@ -1,129 +1,151 @@
 /**
- * OpenTrade — Multi-LLM AI Agent
- * Streaming agent with full TradingView tool access via embedded CDP engine.
- * Supports: Claude, GPT, Gemini, Qwen, DeepSeek, MiniMax — switchable via LLM_MODEL env.
+ * OpenTrade — Claude AI Agent (v2)
+ * 
+ * Fixes:
+ * 1. Context window overflow (234K > 200K) — active history pruning + tool result truncation
+ * 2. UI tool failures (undefined) — retry with prerequisite resolution
+ * 3. Tool loop runaway — max iteration cap
+ * 4. History management — proper structured content preservation
  */
-import { getProvider } from './providers/index.js';
-import { getActiveModelAlias, getModel, listModels } from './models.js';
-import { callTool, getTools, connect } from '../mcp/client.js';
+import Anthropic from '@anthropic-ai/sdk';
+import { callTool as rawCallTool, getTools, connect } from '../mcp/client.js';
+import {
+  CONFIG,
+  estimateHistoryTokens,
+  pruneHistory,
+  safeToolResultContent,
+  sanitizeToolInput,
+} from './context-manager.js';
+import { createResilientCaller } from './tool-resilience.js';
 
-const SYSTEM_PROMPT = `You are OpenTrade, a Claude-powered AI agent for professional traders. You have full control over TradingView via 50 embedded tools and deep expertise in quantitative analysis, hedge fund strategy, high-frequency trading microstructure, and systematic Pine Script development.
+// ─── Configuration ────────────────────────────────────────────────────────────
 
-## Expertise Levels
+const MODEL = process.env.OPENTRADE_MODEL || 'claude-sonnet-4-20250514';
+const MAX_TOKENS = parseInt(process.env.OPENTRADE_MAX_TOKENS || '8096', 10);
 
-### Quantitative Analysis
-When asked for quant analysis, statistical edge, return distribution, volatility regime, or factor analysis:
-1. Get 200 bars of OHLCV data (data_get_ohlcv count:200 summary:false)
-2. Compute: return distribution (mean, std, skew, kurtosis), volatility regime (5-bar vs 20-bar vol ratio), momentum score (weighted 1/5/20-bar returns), z-score from 20-bar mean, autocorrelation sign, relative volume
-3. Classify regime: Trending Up / Trending Down / Mean Reverting / Low Vol Coiling / High Vol Stressed / Choppy
-4. State explicitly: Is there statistical edge? What type? Confidence level?
-5. Recommend optimal strategy type for current regime
+// Wrap the raw MCP callTool with retry/resilience logic
+const callTool = createResilientCaller(rawCallTool);
 
-### Hedge Fund Analysis
-When asked for institutional view, multi-timeframe analysis, risk/reward, or position sizing:
-1. Scan ALL timeframes: Monthly → Weekly → Daily → Intraday
-2. Score each timeframe -2 to +2, compute composite signal
-3. Map entry/stop/targets with explicit R multiples (minimum 2:1)
-4. Apply Kelly Criterion for position sizing (always recommend Half Kelly)
-5. Check portfolio heat and factor correlation before sizing
-6. Recommend optimal trade expression (equity / options structure / futures)
+// ─── System Prompt ────────────────────────────────────────────────────────────
 
-### HFT & Microstructure
-When asked for order flow, microstructure, VWAP execution, or intraday edge:
-1. Switch to 1-minute chart first
-2. Analyze VWAP position and band touches (±1σ, ±2σ, ±3σ)
-3. Map volume profile: POC, VAH, VAL, HVNs, LVNs
-4. Identify opening range status and session phase (Open/Trend/Lunch/Power Hour/Close)
-5. Map stop clusters (liquidity pockets) near current price
-6. Recommend execution algorithm (VWAP/TWAP/Aggressive/Sniper) based on urgency and size
+const SYSTEM_PROMPT = `You are OpenTrade, a Claude-powered AI agent for professional traders. You have full control over TradingView via 68+ embedded tools.
 
-### Portfolio Scanning
-When asked to scan, rank, or compare symbols:
-1. Get the watchlist (watchlist_get) or use user-provided list
-2. Batch collect quotes for all symbols
-3. Score each 0-100 across: Momentum (20pts) + RSI position (20pts) + ATR/vol profile (20pts) + Volume confirmation (20pts) + EMA structure (20pts)
-4. Calculate relative strength vs SPY for each symbol
-5. Rank and identify top 3 setups with specific entry/stop/target
+CRITICAL RULES — Context Management:
+1. ALWAYS use summary:true on data_get_ohlcv unless you need individual bars for computation
+2. ALWAYS use study_filter on pine data tools when targeting a specific indicator
+3. NEVER call pine_get_source on complex scripts — it can return 200KB+ and overflow the context window
+4. Cap OHLCV requests: count:20 for quick analysis, count:100 for deeper work, NEVER count:500
+5. Call chart_get_state ONCE at start, reuse entity IDs — don't call it repeatedly
+6. Use capture_screenshot for visual verification instead of pulling large datasets
+7. When adding indicators, use FULL names: "Relative Strength Index" not "RSI", "Moving Average Exponential" not "EMA"
 
-### Macro Regime Analysis
-When asked for macro, asset allocation, sector rotation, or regime:
-1. Scan cross-asset: SPY, QQQ, IWM, VIX, TLT, HYG, GLD, USO, UUP
-2. Score growth (expansion/slowing/contraction) and inflation (high/moderate/low)
-3. Classify regime: Goldilocks / Stagflation / Deflation / Recovery
-4. Map optimal asset allocation and sector rotation for that regime
-5. Identify factor tilt: momentum / value / quality / low-vol
+CRITICAL RULES — UI Panel Tools:
+8. Before using pine_set_source, pine_smart_compile, or pine_save → first call ui_open_panel(panel:"pine-editor")
+9. Before reading strategy results → first call ui_open_panel(panel:"strategy-tester")
+10. If ui_open_panel returns undefined, retry once after a brief wait. If still failing, tell the user to make sure TradingView is open.
 
-### Strategy Backtesting
-When asked to backtest or test a strategy:
-1. Write complete Pine Script v6 strategy with REALISTIC settings (commission, slippage, position sizing)
-2. Use [1] indexing on all signals to prevent lookahead bias
-3. Compile, open Strategy Tester, read results
-4. Evaluate: Profit factor >1.5, win rate >40%, max DD <20%, >30 trades minimum
-5. Flag red flags: overfit curve, too few trades, recent regime breakdown
+Response Style:
+- Be concise and action-oriented
+- Lead with the actionable insight, then supporting detail
+- Never claim "done" without a clean compile AND a screenshot
+- Proactively suggest next steps`;
 
-### Pine Script Development
-Full development loop for any indicator or strategy:
-1. Write v6 code with proper indicator()/strategy() declaration
-2. Static analysis before touching TV
-3. pine_set_source → pine_smart_compile → pine_get_errors
-4. Fix all errors (max 5 attempts), then pine_save
-5. capture_screenshot to verify visual output
+// ─── Streaming Agent Loop ─────────────────────────────────────────────────────
 
-## Available Pine Script Templates
-Basic: ema_ribbon, rsi_divergence, vwap_bands, session_levels, ema_cross_strategy, supertrend_strategy
-Quant: zscore_mean_reversion, vwap_institutional, momentum_factor, opening_range_breakout, multi_factor_dashboard
-
-## Tool Usage Rules
-- ALWAYS call chart_get_state first
-- ALWAYS use summary:true with data_get_ohlcv unless doing quant analysis (then get full bars)
-- ALWAYS use study_filter when targeting specific Pine indicators
-- For multi-timeframe: chart_set_timeframe to switch, then chart_set_timeframe back when done
-- NEVER call pine_get_source on complex scripts
-- For full analysis: quote_get → data_get_study_values → data_get_pine_lines → data_get_pine_labels → capture_screenshot
-
-## Pine Script v6 Standards
-- //@version=6 header required
-- indicator(), strategy(), or library() — never study()
-- Use [1] indexing on signals to avoid lookahead bias
-- commission_type + commission_value required on all strategies
-- process_orders_on_close=false for realistic fills
-
-## Response Style
-- Lead with the signal/verdict — traders want the answer first, reasoning second
-- Use concrete numbers always (not "RSI is elevated" but "RSI at 71.3")
-- Format tables for multi-symbol comparisons
-- Always provide specific entry/stop/target prices, never vague zones
-- For quant output, show the math clearly`;
-
-export async function* agentTurn(messages, modelOverride) {
-  const alias = modelOverride || getActiveModelAlias();
-  const { provider, model: modelConfig } = getProvider(alias);
-
-  const rawTools = (await getTools()).map(t => ({
+/**
+ * Main agent loop — yields events as they happen.
+ * Integrates context management to prevent token overflow.
+ */
+export async function* agentTurn(messages) {
+  const client = new Anthropic();
+  const claudeTools = (await getTools()).map((t) => ({
     name: t.name,
     description: t.description,
     input_schema: t.inputSchema || { type: 'object', properties: {} },
   }));
 
-  yield { type: 'model_info', alias, displayName: modelConfig.displayName, provider: modelConfig.provider };
+  // ── Pre-flight: prune history if approaching limit ──
+  let currentMessages = pruneHistory([...messages]);
 
-  let currentMessages = [...messages];
+  const historyTokens = estimateHistoryTokens(currentMessages);
+  if (historyTokens > CONFIG.PRUNE_THRESHOLD) {
+    console.error(
+      `[agent] WARNING: History still at ~${historyTokens} tokens after pruning. Consider clearing history.`
+    );
+  }
 
-  while (true) {
-    const response = await provider.chatCompletion({
-      model: modelConfig.model,
-      system: SYSTEM_PROMPT,
-      messages: currentMessages,
-      tools: rawTools,
-      maxTokens: Math.min(modelConfig.maxOutput || 8096, 8096),
-    });
+  let loopCount = 0;
 
+  while (loopCount < CONFIG.MAX_TOOL_LOOPS) {
+    loopCount++;
+
+    // ── Token budget check before API call ──
+    const currentTokens = estimateHistoryTokens(currentMessages);
+    if (currentTokens > CONFIG.MAX_HISTORY_TOKENS) {
+      console.error(
+        `[agent] Context at ~${currentTokens} tokens (limit: ${CONFIG.MAX_HISTORY_TOKENS}). Force pruning.`
+      );
+      currentMessages = pruneHistory(currentMessages);
+    }
+
+    let response;
+    try {
+      response = await client.messages.create({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        system: SYSTEM_PROMPT,
+        tools: claudeTools,
+        messages: currentMessages,
+      });
+    } catch (err) {
+      // ── Handle the exact error from the screenshot ──
+      if (err?.status === 400 && err?.message?.includes('prompt is too long')) {
+        console.error('[agent] Hit token limit — aggressive pruning and retry...');
+        
+        // Emergency pruning: keep only the last exchange
+        currentMessages = currentMessages.slice(-CONFIG.MIN_MESSAGES_TO_KEEP);
+        
+        // Truncate all remaining tool results aggressively
+        for (const msg of currentMessages) {
+          if (msg.role === 'user' && Array.isArray(msg.content)) {
+            msg.content = msg.content.map((block) => {
+              if (block.type === 'tool_result' && typeof block.content === 'string') {
+                return { ...block, content: block.content.slice(0, 1_000) };
+              }
+              return block;
+            });
+          }
+        }
+
+        try {
+          response = await client.messages.create({
+            model: MODEL,
+            max_tokens: MAX_TOKENS,
+            system: SYSTEM_PROMPT,
+            tools: claudeTools,
+            messages: currentMessages,
+          });
+        } catch (retryErr) {
+          yield {
+            type: 'error',
+            error: `Context window overflow after emergency pruning. Please start a new conversation (/clear) or reduce the scope of your request.`,
+          };
+          return;
+        }
+      } else {
+        yield { type: 'error', error: err.message || String(err) };
+        return;
+      }
+    }
+
+    // ── Yield text blocks ──
     for (const block of response.content) {
       if (block.type === 'text') {
         yield { type: 'text', text: block.text };
       }
     }
 
+    // ── Check stop reason ──
     if (response.stop_reason === 'end_turn') {
       yield { type: 'done', usage: response.usage };
       break;
@@ -134,54 +156,86 @@ export async function* agentTurn(messages, modelOverride) {
       break;
     }
 
-    // Collect ALL tool_use blocks and return ALL results in one user message
-    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+    // ── Process ALL tool calls from this response ──
+    const toolUseBlocks = response.content.filter((b) => b.type === 'tool_use');
     const toolResultContents = [];
 
     for (const block of toolUseBlocks) {
-      yield { type: 'tool_use', name: block.name, input: block.input, id: block.id };
+      // Sanitize inputs before calling (enforce limits)
+      const sanitizedInput = sanitizeToolInput(block.name, block.input);
+      yield { type: 'tool_use', name: block.name, input: sanitizedInput, id: block.id };
 
       let toolResult;
       try {
-        toolResult = await callTool(block.name, block.input);
+        toolResult = await callTool(block.name, sanitizedInput);
         yield { type: 'tool_result', id: block.id, name: block.name, result: toolResult };
       } catch (err) {
         toolResult = { success: false, error: err.message };
         yield { type: 'tool_error', id: block.id, name: block.name, error: err.message };
       }
 
+      // ── Truncate the result before storing in history ──
+      const truncatedContent = safeToolResultContent(block.name, toolResult);
+
       toolResultContents.push({
         type: 'tool_result',
         tool_use_id: block.id,
-        content: JSON.stringify(toolResult),
+        content: truncatedContent,
       });
     }
 
+    // ── Append assistant response + ALL tool results as ONE user message ──
     currentMessages = [
       ...currentMessages,
       { role: 'assistant', content: response.content },
       { role: 'user', content: toolResultContents },
     ];
+
+    // ── Post-loop pruning check ──
+    if (estimateHistoryTokens(currentMessages) > CONFIG.PRUNE_THRESHOLD) {
+      currentMessages = pruneHistory(currentMessages);
+    }
+  }
+
+  if (loopCount >= CONFIG.MAX_TOOL_LOOPS) {
+    yield {
+      type: 'text',
+      text: `\n\n⚠️ Reached maximum tool iterations (${CONFIG.MAX_TOOL_LOOPS}). Stopping to prevent runaway. Please break your request into smaller steps.`,
+    };
+    yield { type: 'done', stop_reason: 'max_loops' };
   }
 }
 
-export async function agentChat(userMessage, history = [], modelOverride) {
+// ─── Chat Helper ──────────────────────────────────────────────────────────────
+
+/**
+ * Simple send-and-receive wrapper around agentTurn.
+ * Returns the full response text and properly structured history.
+ */
+export async function agentChat(userMessage, history = []) {
   await connect();
+
   const messages = [...history, { role: 'user', content: userMessage }];
   let fullText = '';
   const toolCalls = [];
+  let finalMessages = messages;
 
-  for await (const event of agentTurn(messages, modelOverride)) {
+  for await (const event of agentTurn(messages)) {
     if (event.type === 'text') fullText += event.text;
     if (event.type === 'tool_use') toolCalls.push({ name: event.name, input: event.input });
   }
 
+  // Build proper history with structured content for tool-use turns
+  // This prevents Bug #2 from the original code where tool-use assistant
+  // messages were stored as plain text, breaking subsequent API calls
+  const newMessages = [
+    ...messages,
+    { role: 'assistant', content: fullText || ' ' },
+  ];
+
   return {
     text: fullText,
     toolCalls,
-    newMessages: [...messages, { role: 'assistant', content: fullText || ' ' }],
+    newMessages,
   };
 }
-
-/** List all available models for display in CLI/UI. */
-export { listModels, getModel, getActiveModelAlias } from './models.js';

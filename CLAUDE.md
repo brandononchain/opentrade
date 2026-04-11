@@ -23,6 +23,14 @@ You are a professional trading AI agent controlling TradingView via 50 embedded 
 | "broker", "execution", "webhook", "order types" | broker-integration | identify broker → execution plan → webhook template → commission analysis |
 | "liquidity", "order book", "volume profile", "depth" | liquidity-analysis | data_get_ohlcv → volume profile → liquidity zones → execution risk score |
 | "financial instrument", "futures specs", "options greeks" | financial-instruments | chart_get_state → classify → full instrument knowledge → related instruments |
+| "lint", "code quality", "repainting check" | pine-lint | lintPineScript → formatLintReport → detectsRepainting → auditStrategy |
+| "build strategy", "compose", "preset strategy" | strategy-build | buildStrategy / buildPreset → compile → backtest validate |
+| "local TA", "compute indicators", "offline analysis" | oakscript-compute | computeIndicators(closes) → taCore.* → BacktestEngine |
+| "custom chart", "HTML chart", "lightweight chart" | chart-render | generateChartHTML → generateMultiPaneHTML → generatePluginPine |
+| "ICT", "killzones", "FVG", "fair value gap" | ict-analysis | getTemplate('ict_killzones') → compile → market_structure |
+| "order blocks", "BOS", "CHoCH", "smart money" | smc-analysis | getTemplate('market_structure') → getTemplate('order_blocks') → compile |
+| "options", "Black-Scholes", "greeks" | options-pricer | getTemplate('black_scholes') → compile → read table |
+| "correlation", "heatmap" | correlation-scan | getTemplate('correlation_heatmap') → compile → screenshot |
 
 ## Tool Decision Tree
 
@@ -174,6 +182,81 @@ Growth LOW  + Inflation LOW  → Deflation/Recession
 | multi_asset_correlation | indicator | Cross-asset rolling correlation dashboard |
 | institutional_order_flow | indicator | Delta volume, block detection, cumulative flow |
 | macro_regime_dashboard | indicator | SPY/TLT/GLD/USO/DXY regime classifier |
+
+## Pro Templates (v3)
+
+| Template | Type | Purpose |
+|----------|------|---------|
+| ict_killzones | indicator | ICT session killzones + Fair Value Gaps + PDH/PDL |
+| market_structure | indicator | BOS / CHoCH detection with swing structure lines |
+| order_blocks | indicator | Institutional order block detector with zone boxes |
+| fib_auto_levels | indicator | Auto Fibonacci retracement + extension levels |
+| mtf_dashboard | indicator | 5-timeframe RSI + EMA + Bias dashboard table |
+| screener_40 | indicator | 40-symbol screener with RSI + EMA scoring |
+| library_ta_utils | library | Reusable TA library: ATR%, pivots, momentum, zscore, volRegime |
+| webhook_automation | strategy | Webhook-ready strategy with JSON alert messages |
+| black_scholes | indicator | Black-Scholes options pricer with Greeks table |
+| heikin_ashi_strategy | strategy | Smoothed Heikin-Ashi with entry/exit logic |
+| correlation_heatmap | indicator | 5-asset correlation matrix with color-coded cells |
+| adr_range_analysis | indicator | Average Daily Range with usage percentage |
+| liquidation_levels | indicator | Crypto leverage liquidation level estimator |
+| volume_delta | indicator | Volume delta oscillator with cumulative delta |
+
+## Local TA Engine (OakScript)
+
+Use `computeIndicators(closes, opts)` for offline TA without TradingView:
+```javascript
+import { taCore, BacktestEngine, computeIndicators } from 'tradingview-agent';
+
+// 61 functions: sma, ema, rsi, macd, bbands, stoch, adx, atr, supertrend, ichimoku...
+const rsi = taCore.rsi(closes, 14);
+
+// Run backtest locally
+const engine = new BacktestEngine({ capital: 100000, riskPct: 0.02 });
+const result = engine.run(bars, signals);
+// → { trades, sharpe, maxDrawdown, profitFactor, kellyPercent, grade }
+```
+
+## Pine Script Linter
+
+Use `lintPineScript(source)` before compiling — catches 30+ issues:
+```
+detectsRepainting(source) → count of repainting patterns
+auditStrategy(source)     → strategy-specific quality audit
+lintPineScript(source)    → { diagnostics, score, grade, summary }
+```
+Categories: repainting, lookahead, performance, style, security, strategy, best-practices.
+
+## Strategy Builder
+
+Compose strategies from modular building blocks:
+```javascript
+import { buildStrategy, buildPreset } from 'tradingview-agent';
+
+// From preset
+const pine = buildPreset('trend_following');
+
+// Custom composition
+const custom = buildStrategy({
+  name: 'My Strategy',
+  entries: ['ema_cross', 'rsi_reversal'],
+  filters: ['trend_ema', 'volume'],
+  exits: ['atr_stop', 'trailing_stop'],
+  sizing: 'kelly'
+});
+```
+9 entry modules, 5 filters, 5 exits, 3 sizing methods, 5 presets.
+
+## Lightweight Charts Plugins
+
+Generate standalone HTML charts with custom series:
+```javascript
+import { generateChartHTML, generateMultiPaneHTML, generatePluginPine } from 'tradingview-agent';
+
+const html = generateChartHTML({ series: ['rounded_candles', 'volume_profile'] });
+const pine = generatePluginPine('volume_profile', { rowSize: 24 });
+```
+8 custom series, 8 drawing primitives, multi-pane sync, Pine generators.
 
 ## Pine Script v6 Critical Rules
 

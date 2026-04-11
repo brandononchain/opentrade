@@ -34,9 +34,21 @@ export {
 export { agentTurn, agentChat } from './agent/claude.js';
 
 // ── Pine Script ──
-export { analyzeStatic, generateTemplate, developScript } from './pine/analyzer.js';
+export { analyzeStatic, generateTemplate, developScript, analyzeDeep, backtestValidate, computeIndicators, extractParameters } from './pine/analyzer.js';
 export { writePineScript, debugPineScript, explainPineScript } from './pine/writer.js';
 export { TEMPLATES, getTemplate, listTemplates, searchTemplates } from './pine/templates.js';
+
+// ── Pine Linter ──
+export { lintPineScript, formatLintReport, detectsRepainting, auditStrategy, listRules } from './pine/linter.js';
+
+// ── Strategy Builder ──
+export { buildStrategy, buildPreset, listModules, STRATEGY_PRESETS } from './pine/strategy-builder.js';
+
+// ── OakScript Local TA Engine ──
+export { Series, BarData, taCore, ta, math, BacktestEngine } from './pine/oakscript.js';
+
+// ── Charts / Lightweight Charts Plugins ──
+export { generateChartHTML, generateMultiPaneHTML, generatePluginPine, listPlugins, CUSTOM_SERIES, DRAWING_PRIMITIVES } from './charts/plugins.js';
 
 // ── Streaming / Monitoring ──
 export { watchChart, scanSymbols, watchIndicator } from './agent/stream.js';

@@ -277,20 +277,27 @@ plotshape(shortCondition, "Sell", shape.triangledown, location.abovebar, color.r
 
 /**
  * Get a template by name.
+ * Handles both raw string templates and {code, name, ...} objects.
  */
 export function getTemplate(name) {
-  return TEMPLATES[name] || null;
+  const t = TEMPLATES[name];
+  if (!t) return null;
+  return typeof t === 'string' ? t : t.code || null;
 }
 
 /**
  * List all available templates.
  */
 export function listTemplates() {
-  return Object.keys(TEMPLATES).map(name => ({
-    name,
-    type: TEMPLATES[name].includes('strategy(') ? 'strategy' : 'indicator',
-    lines: TEMPLATES[name].split('\n').length,
-  }));
+  return Object.keys(TEMPLATES).map(name => {
+    const t = TEMPLATES[name];
+    const src = typeof t === 'string' ? t : (t.code || '');
+    return {
+      name,
+      type: src.includes('strategy(') ? 'strategy' : src.includes('library(') ? 'library' : 'indicator',
+      lines: src.split('\n').length,
+    };
+  });
 }
 
 /**
@@ -299,7 +306,11 @@ export function listTemplates() {
 export function searchTemplates(query) {
   const q = query.toLowerCase();
   return Object.entries(TEMPLATES)
-    .filter(([name, src]) => name.includes(q) || src.toLowerCase().includes(q))
+    .filter(([name, t]) => {
+      const src = typeof t === 'string' ? t : (t.code || '');
+      const desc = typeof t === 'object' ? (t.description || '') : '';
+      return name.includes(q) || src.toLowerCase().includes(q) || desc.toLowerCase().includes(q);
+    })
     .map(([name]) => name);
 }
 
@@ -1173,3 +1184,637 @@ if barstate.islast
 
 // Merge external templates into main TEMPLATES
 Object.assign(TEMPLATES, EXTERNAL_TEMPLATES);
+
+// ============================================================================
+// PRO TEMPLATES — ICT, Smart Money, Screeners, Libraries, Webhooks
+// ============================================================================
+
+export const PRO_TEMPLATES = {
+
+  // ── ICT Killzones + Fair Value Gaps ──
+  ict_killzones: `//@version=6
+indicator("ICT Killzones + FVG", overlay=true, max_boxes_count=500, max_lines_count=200)
+
+// ── Inputs ──
+grp = "Killzones"
+showAsia  = input.bool(true, "Asia (20:00-00:00 ET)",  group=grp)
+showLon   = input.bool(true, "London (02:00-05:00 ET)", group=grp)
+showNY    = input.bool(true, "NY AM (08:30-11:00 ET)",  group=grp)
+showNYPM  = input.bool(true, "NY PM (13:30-16:00 ET)",  group=grp)
+showFVG   = input.bool(true, "Fair Value Gaps",          group="FVG")
+fvgFilter = input.float(0.0, "Min FVG Size (ticks)", step=1, group="FVG")
+
+// ── Killzone detection ──
+asiaKZ = not na(time(timeframe.period, "2000-0000:1234567", "America/New_York"))
+lonKZ  = not na(time(timeframe.period, "0200-0500:1234567", "America/New_York"))
+nyKZ   = not na(time(timeframe.period, "0830-1100:1234567", "America/New_York"))
+nyPMKZ = not na(time(timeframe.period, "1330-1600:1234567", "America/New_York"))
+
+bgcolor(showAsia and asiaKZ  ? color.new(color.orange, 93) : na, title="Asia KZ")
+bgcolor(showLon  and lonKZ   ? color.new(color.blue,   93) : na, title="London KZ")
+bgcolor(showNY   and nyKZ    ? color.new(color.green,  93) : na, title="NY AM KZ")
+bgcolor(showNYPM and nyPMKZ  ? color.new(color.purple, 93) : na, title="NY PM KZ")
+
+// ── Fair Value Gap detection ──
+bullFVG = low > high[2] and low - high[2] > fvgFilter * syminfo.mintick
+bearFVG = high < low[2] and low[2] - high > fvgFilter * syminfo.mintick
+
+if showFVG and bullFVG
+    box.new(bar_index - 1, low, bar_index + 5, high[2],
+        bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 60))
+
+if showFVG and bearFVG
+    box.new(bar_index - 1, low[2], bar_index + 5, high,
+        bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 60))
+
+// ── Previous Day H/L/C ──
+pdh_ = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl_ = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_on)
+pdc_ = request.security(syminfo.tickerid, "D", close[1],lookahead=barmerge.lookahead_on)
+
+plot(pdh_, "PDH", color.new(color.lime, 40), 1, plot.style_stepline)
+plot(pdl_, "PDL", color.new(color.red, 40),  1, plot.style_stepline)
+plot(pdc_, "PDC", color.new(color.gray, 40), 1, plot.style_stepline)
+`,
+
+  // ── Market Structure (BOS / CHoCH) ──
+  market_structure: `//@version=6
+indicator("Market Structure (BOS/CHoCH)", overlay=true, max_lines_count=500, max_labels_count=200)
+
+// ── Inputs ──
+pivotLen = input.int(5, "Pivot Lookback", minval=2, group="Structure")
+showBOS  = input.bool(true, "Show Break of Structure", group="Structure")
+showCHoCH= input.bool(true, "Show Change of Character", group="Structure")
+
+// ── Pivot Points ──
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float lastHH = na, var float lastLL = na
+var float lastLH = na, var float lastHL = na
+var int trend = 0  // 1 = bullish, -1 = bearish
+
+if not na(ph)
+    if ph > nz(lastHH)
+        lastHH := ph
+        if trend == -1 and showCHoCH
+            label.new(bar_index - pivotLen, ph, "CHoCH", color=color.green,
+                textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        trend := 1
+    else
+        lastLH := ph
+        if trend == 1 and showBOS
+            label.new(bar_index - pivotLen, ph, "BOS↓", color=color.red,
+                textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+if not na(pl)
+    if pl < nz(lastLL)
+        lastLL := pl
+        if trend == 1 and showCHoCH
+            label.new(bar_index - pivotLen, pl, "CHoCH", color=color.red,
+                textcolor=color.white, style=label.style_label_up, size=size.tiny)
+        trend := -1
+    else
+        lastHL := pl
+        if trend == -1 and showBOS
+            label.new(bar_index - pivotLen, pl, "BOS↑", color=color.green,
+                textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+// ── Swing level lines ──
+plot(lastHH, "Swing High", color.new(color.green, 50), 1, plot.style_stepline)
+plot(lastLL, "Swing Low",  color.new(color.red,   50), 1, plot.style_stepline)
+`,
+
+  // ── Order Block Detector ──
+  order_blocks: `//@version=6
+indicator("Order Blocks", overlay=true, max_boxes_count=500)
+
+// ── Inputs ──
+obLen     = input.int(5, "OB Lookback", minval=1, group="Order Blocks")
+obExtend  = input.int(20, "Extend Bars", minval=5, group="Order Blocks")
+bullOBCol = input.color(color.new(color.green, 80), "Bullish OB", group="Order Blocks")
+bearOBCol = input.color(color.new(color.red, 80),   "Bearish OB", group="Order Blocks")
+
+// ── Detect Order Blocks ──
+// Bullish OB: last bearish candle before a strong bullish move
+bullOB = close[2] < open[2] and close[1] > open[1] and close > high[2]
+    and (close[1] - open[1]) > (open[2] - close[2]) * 1.5
+
+// Bearish OB: last bullish candle before a strong bearish move
+bearOB = close[2] > open[2] and close[1] < open[1] and close < low[2]
+    and (open[1] - close[1]) > (close[2] - open[2]) * 1.5
+
+if bullOB
+    box.new(bar_index - 2, low[2], bar_index + obExtend, high[2],
+        bgcolor=bullOBCol, border_color=color.green, border_width=1)
+
+if bearOB
+    box.new(bar_index - 2, low[2], bar_index + obExtend, high[2],
+        bgcolor=bearOBCol, border_color=color.red, border_width=1)
+`,
+
+  // ── Fibonacci Auto-Levels ──
+  fib_auto_levels: `//@version=6
+indicator("Auto Fibonacci Levels", overlay=true, max_lines_count=50, max_labels_count=20)
+
+// ── Inputs ──
+lookback_ = input.int(50, "Swing Lookback", minval=10, group="Fibonacci")
+
+swingH = ta.highest(high, lookback_)
+swingL = ta.lowest(low, lookback_)
+range_ = swingH - swingL
+
+// ── Fib Levels ──
+fib236 = swingH - range_ * 0.236
+fib382 = swingH - range_ * 0.382
+fib500 = swingH - range_ * 0.500
+fib618 = swingH - range_ * 0.618
+fib786 = swingH - range_ * 0.786
+
+// ── Extension Levels ──
+ext127 = swingL - range_ * 0.272
+ext161 = swingL - range_ * 0.618
+ext200 = swingL - range_ * 1.000
+
+plot(swingH, "1.000",   color.new(color.red, 30),    1, plot.style_stepline)
+plot(fib236, "0.236",   color.new(color.orange, 40),  1, plot.style_stepline)
+plot(fib382, "0.382",   color.new(color.yellow, 40),  1, plot.style_stepline)
+plot(fib500, "0.500",   color.new(color.gray, 30),    1, plot.style_stepline)
+plot(fib618, "0.618",   color.new(color.teal, 40),    1, plot.style_stepline)
+plot(fib786, "0.786",   color.new(color.blue, 40),    1, plot.style_stepline)
+plot(swingL, "0.000",   color.new(color.green, 30),   1, plot.style_stepline)
+plot(ext127, "-0.272",  color.new(color.purple, 50),  1, plot.style_stepline)
+plot(ext161, "-0.618",  color.new(color.purple, 40),  1, plot.style_stepline)
+`,
+
+  // ── Multi-Timeframe Dashboard ──
+  mtf_dashboard: `//@version=6
+indicator("Multi-Timeframe Dashboard", overlay=true, max_tables_count=1)
+
+// Get signals from multiple timeframes
+[rsi_m, ema9_m, ema21_m] = request.security(syminfo.tickerid, "M",
+    [ta.rsi(close, 14), ta.ema(close, 9), ta.ema(close, 21)], lookahead=barmerge.lookahead_off)
+[rsi_w, ema9_w, ema21_w] = request.security(syminfo.tickerid, "W",
+    [ta.rsi(close, 14), ta.ema(close, 9), ta.ema(close, 21)], lookahead=barmerge.lookahead_off)
+[rsi_d, ema9_d, ema21_d] = request.security(syminfo.tickerid, "D",
+    [ta.rsi(close, 14), ta.ema(close, 9), ta.ema(close, 21)], lookahead=barmerge.lookahead_off)
+[rsi_4h, ema9_4h, ema21_4h] = request.security(syminfo.tickerid, "240",
+    [ta.rsi(close, 14), ta.ema(close, 9), ta.ema(close, 21)], lookahead=barmerge.lookahead_off)
+[rsi_1h, ema9_1h, ema21_1h] = request.security(syminfo.tickerid, "60",
+    [ta.rsi(close, 14), ta.ema(close, 9), ta.ema(close, 21)], lookahead=barmerge.lookahead_off)
+
+bias(float r, float e9, float e21) =>
+    score = 0
+    score += e9 > e21 ? 1 : -1
+    score += r > 50 ? 1 : -1
+    score
+
+if barstate.islast
+    var table t = table.new(position.top_right, 4, 6, bgcolor=color.new(color.black, 80), border_width=1, border_color=color.gray)
+    table.cell(t, 0, 0, "TF",     text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 0, "RSI",    text_color=color.gray, text_size=size.small)
+    table.cell(t, 2, 0, "EMA",    text_color=color.gray, text_size=size.small)
+    table.cell(t, 3, 0, "Bias",   text_color=color.gray, text_size=size.small)
+
+    f_row(int row, string tf, float r, float e9, float e21) =>
+        b = bias(r, e9, e21)
+        table.cell(t, 0, row, tf, text_color=color.white, text_size=size.small)
+        table.cell(t, 1, row, str.tostring(r, "#.#"), text_color=r > 70 ? color.red : r < 30 ? color.green : color.gray, text_size=size.small)
+        table.cell(t, 2, row, e9 > e21 ? "Bull" : "Bear", text_color=e9 > e21 ? color.green : color.red, text_size=size.small)
+        table.cell(t, 3, row, b > 0 ? "▲" : b < 0 ? "▼" : "—", text_color=b > 0 ? color.green : b < 0 ? color.red : color.gray, text_size=size.small)
+
+    f_row(1, "Monthly", rsi_m,  ema9_m,  ema21_m)
+    f_row(2, "Weekly",  rsi_w,  ema9_w,  ema21_w)
+    f_row(3, "Daily",   rsi_d,  ema9_d,  ema21_d)
+    f_row(4, "4H",      rsi_4h, ema9_4h, ema21_4h)
+    f_row(5, "1H",      rsi_1h, ema9_1h, ema21_1h)
+`,
+
+  // ── Screener Template (40 Symbols) ──
+  screener_40: `//@version=6
+indicator("40-Symbol Screener", overlay=false, max_tables_count=1)
+
+// ── Inputs ──
+grp = "Screener"
+rsiLen_  = input.int(14, "RSI Length", group=grp)
+emaLen_  = input.int(50, "EMA Length", group=grp)
+
+f_score(sym) =>
+    [c, r, e] = request.security(sym, "D",
+        [close, ta.rsi(close, rsiLen_), ta.ema(close, emaLen_)],
+        lookahead=barmerge.lookahead_off)
+    score = 0.0
+    score += c > e ? 1 : -1        // Above EMA
+    score += r > 50 ? 0.5 : -0.5    // RSI direction
+    score += r < 30 ? 1 : r > 70 ? -1 : 0  // RSI extreme
+    [c, r, score]
+
+// Top 8 symbols (Pine limits request.security calls to ~40)
+[c1,r1,s1]   = f_score("AAPL")
+[c2,r2,s2]   = f_score("MSFT")
+[c3,r3,s3]   = f_score("GOOGL")
+[c4,r4,s4]   = f_score("AMZN")
+[c5,r5,s5]   = f_score("NVDA")
+[c6,r6,s6]   = f_score("META")
+[c7,r7,s7]   = f_score("TSLA")
+[c8,r8,s8]   = f_score("SPY")
+
+if barstate.islast
+    var table t = table.new(position.middle_center, 4, 9, bgcolor=color.new(color.black, 80), border_width=1)
+    table.cell(t, 0, 0, "Symbol", text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 0, "Price",  text_color=color.gray, text_size=size.small)
+    table.cell(t, 2, 0, "RSI",    text_color=color.gray, text_size=size.small)
+    table.cell(t, 3, 0, "Score",  text_color=color.gray, text_size=size.small)
+
+    f_row2(int row, string sym, float c, float r, float s) =>
+        table.cell(t, 0, row, sym, text_color=color.white, text_size=size.small)
+        table.cell(t, 1, row, str.tostring(c, "#.##"), text_color=color.white, text_size=size.small)
+        table.cell(t, 2, row, str.tostring(r, "#.#"), text_color=r > 70 ? color.red : r < 30 ? color.green : color.gray, text_size=size.small)
+        table.cell(t, 3, row, str.tostring(s, "#.#"), text_color=s > 0 ? color.green : color.red, text_size=size.small)
+
+    f_row2(1, "AAPL",  c1, r1, s1)
+    f_row2(2, "MSFT",  c2, r2, s2)
+    f_row2(3, "GOOGL", c3, r3, s3)
+    f_row2(4, "AMZN",  c4, r4, s4)
+    f_row2(5, "NVDA",  c5, r5, s5)
+    f_row2(6, "META",  c6, r6, s6)
+    f_row2(7, "TSLA",  c7, r7, s7)
+    f_row2(8, "SPY",   c8, r8, s8)
+`,
+
+  // ── Pine Library Template ──
+  library_ta_utils: `//@version=6
+// @description Technical Analysis Utilities Library
+library("TAUtils", overlay=true)
+
+// @function Calculates the Average True Range percentage
+// @param len ATR period
+// @returns ATR as a percentage of close
+export atrPercent(simple int len) =>
+    ta.atr(len) / close * 100
+
+// @function Detects pivots with strength filtering
+// @param src Source series
+// @param left Left bars
+// @param right Right bars
+// @returns [pivotHigh, pivotLow]
+export pivots(float src, simple int left, simple int right) =>
+    ph = ta.pivothigh(src, left, right)
+    pl = ta.pivotlow(src, left, right)
+    [ph, pl]
+
+// @function Multi-factor momentum score
+// @param len Lookback period
+// @returns Score from -3 to +3
+export momentumScore(simple int len) =>
+    rsi_ = ta.rsi(close, 14)
+    macdLine = ta.ema(close, 12) - ta.ema(close, 26)
+    trend = close > ta.ema(close, len) ? 1 : -1
+    rsiScore = rsi_ > 60 ? 1 : rsi_ < 40 ? -1 : 0
+    macdScore = macdLine > 0 ? 1 : -1
+    trend + rsiScore + macdScore
+
+// @function Volatility regime classifier
+// @returns [regime, ratio] where regime is "expanding", "compressing", or "stable"
+export volRegime() =>
+    vol5  = ta.stdev(math.log(close / close[1]), 5)
+    vol20 = ta.stdev(math.log(close / close[1]), 20)
+    ratio = vol20 > 0 ? vol5 / vol20 : 1.0
+    regime = ratio > 1.5 ? "expanding" : ratio < 0.7 ? "compressing" : "stable"
+    [regime, ratio]
+
+// @function Z-score of price from N-period mean
+// @param src Source
+// @param len Lookback
+// @returns Z-score value
+export zscore(float src, simple int len) =>
+    mean = ta.sma(src, len)
+    sd   = ta.stdev(src, len)
+    sd != 0 ? (src - mean) / sd : 0.0
+`,
+
+  // ── Webhook Alert Template ──
+  webhook_automation: `//@version=6
+strategy("Webhook Automated Strategy", overlay=true,
+    initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+    commission_type=strategy.commission.percent, commission_value=0.05, slippage=2)
+
+// ── Inputs ──
+grpS = "Strategy"
+fastLen_ = input.int(9, "Fast EMA", group=grpS)
+slowLen_ = input.int(21, "Slow EMA", group=grpS)
+atrLen_  = input.int(14, "ATR Length", group=grpS)
+atrMult_ = input.float(2.0, "ATR Stop Multiplier", step=0.1, group=grpS)
+
+grpW = "Webhook"
+botToken = input.string("", "Bot Token (leave empty for TV alerts)", group=grpW)
+
+// ── Calculations ──
+fast_ = ta.ema(close, fastLen_)
+slow_ = ta.ema(close, slowLen_)
+atr_  = ta.atr(atrLen_)
+
+longSig  = ta.crossover(fast_, slow_)[1]
+shortSig = ta.crossunder(fast_, slow_)[1]
+
+// ── Execution with Alert Messages ──
+if longSig and strategy.position_size <= 0
+    stopPrice  = close - atrMult_ * atr_
+    limitPrice = close + atrMult_ * atr_ * 2
+    strategy.entry("Long", strategy.long,
+        alert_message='{"action":"buy","ticker":"' + syminfo.ticker + '","price":' + str.tostring(close) + ',"stop":' + str.tostring(stopPrice) + ',"target":' + str.tostring(limitPrice) + '}')
+    strategy.exit("Long X", "Long", stop=stopPrice, limit=limitPrice)
+
+if shortSig and strategy.position_size >= 0
+    stopPrice  = close + atrMult_ * atr_
+    limitPrice = close - atrMult_ * atr_ * 2
+    strategy.entry("Short", strategy.short,
+        alert_message='{"action":"sell","ticker":"' + syminfo.ticker + '","price":' + str.tostring(close) + ',"stop":' + str.tostring(stopPrice) + ',"target":' + str.tostring(limitPrice) + '}')
+    strategy.exit("Short X", "Short", stop=stopPrice, limit=limitPrice)
+
+plot(fast_, "Fast EMA", color.blue, 2)
+plot(slow_, "Slow EMA", color.orange, 1)
+`,
+
+  // ── Black-Scholes Options Pricer ──
+  black_scholes: `//@version=6
+indicator("Black-Scholes Options Pricer", overlay=false, max_tables_count=1)
+
+// ── Inputs ──
+grp = "Options"
+strike   = input.float(100.0, "Strike Price",       step=1,   group=grp)
+daysExp  = input.int(30,      "Days to Expiration", minval=1, group=grp)
+riskFree = input.float(5.0,   "Risk-Free Rate %",   step=0.1, group=grp)
+divYield = input.float(0.0,   "Dividend Yield %",   step=0.1, group=grp)
+ivInput  = input.float(0.0,   "IV Override (0=calc)",step=0.1, group=grp)
+
+// ── Implied Volatility estimate from HV ──
+hvLen = 20
+returns_  = math.log(close / close[1])
+hv = ta.stdev(returns_, hvLen) * math.sqrt(252) * 100
+iv = ivInput > 0 ? ivInput : hv
+
+// ── Black-Scholes Math ──
+S = close
+K = strike
+T = daysExp / 365.0
+r = riskFree / 100.0
+q = divYield / 100.0
+sigma = iv / 100.0
+
+// Normal CDF approximation (Abramowitz & Stegun)
+f_ncdf(float x) =>
+    t = 1.0 / (1.0 + 0.2316419 * math.abs(x))
+    d = 0.3989422804 * math.exp(-x * x / 2.0)
+    p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))))
+    x > 0 ? 1.0 - p : p
+
+d1 = (math.log(S / K) + (r - q + sigma * sigma / 2) * T) / (sigma * math.sqrt(T))
+d2 = d1 - sigma * math.sqrt(T)
+
+callPrice = S * math.exp(-q * T) * f_ncdf(d1) - K * math.exp(-r * T) * f_ncdf(d2)
+putPrice  = K * math.exp(-r * T) * f_ncdf(-d2) - S * math.exp(-q * T) * f_ncdf(-d1)
+
+// ── Greeks ──
+delta_c = math.exp(-q * T) * f_ncdf(d1)
+delta_p = -math.exp(-q * T) * f_ncdf(-d1)
+gamma_  = math.exp(-q * T) * 0.3989422804 * math.exp(-d1 * d1 / 2) / (S * sigma * math.sqrt(T))
+theta_c = -(S * sigma * math.exp(-q * T) * 0.3989422804 * math.exp(-d1 * d1 / 2)) / (2 * math.sqrt(T)) - r * K * math.exp(-r * T) * f_ncdf(d2) + q * S * math.exp(-q * T) * f_ncdf(d1)
+vega_   = S * math.exp(-q * T) * math.sqrt(T) * 0.3989422804 * math.exp(-d1 * d1 / 2) / 100
+
+// ── Display ──
+if barstate.islast
+    var table t = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 80), border_width=1, border_color=color.gray)
+    table.cell(t, 0, 0, "B-S Pricer", text_color=color.yellow, text_size=size.normal, text_halign=text.align_center)
+    table.cell(t, 1, 0, "Call", text_color=color.green, text_size=size.small)
+    table.cell(t, 2, 0, "Put",  text_color=color.red, text_size=size.small)
+
+    table.cell(t, 0, 1, "Price", text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 1, str.tostring(callPrice, "#.##"), text_color=color.green, text_size=size.small)
+    table.cell(t, 2, 1, str.tostring(putPrice, "#.##"),  text_color=color.red, text_size=size.small)
+
+    table.cell(t, 0, 2, "Delta", text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 2, str.tostring(delta_c, "#.###"), text_color=color.white, text_size=size.small)
+    table.cell(t, 2, 2, str.tostring(delta_p, "#.###"), text_color=color.white, text_size=size.small)
+
+    table.cell(t, 0, 3, "Gamma", text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 3, str.tostring(gamma_, "#.####"), text_color=color.white, text_size=size.small)
+
+    table.cell(t, 0, 4, "Theta", text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 4, str.tostring(theta_c / 365, "#.##"), text_color=color.white, text_size=size.small)
+
+    table.cell(t, 0, 5, "Vega", text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 5, str.tostring(vega_, "#.##"), text_color=color.white, text_size=size.small)
+
+    table.cell(t, 0, 6, "IV",    text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 6, str.tostring(iv, "#.#") + "%", text_color=color.yellow, text_size=size.small)
+
+    table.cell(t, 0, 7, "Spot",  text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 7, str.tostring(S, "#.##"), text_color=color.white, text_size=size.small)
+`,
+
+  // ── Heikin-Ashi Smoothed Strategy ──
+  heikin_ashi_strategy: `//@version=6
+strategy("Heikin-Ashi Smoothed", overlay=true,
+    initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+    commission_type=strategy.commission.percent, commission_value=0.05, slippage=2)
+
+// ── Inputs ──
+haLen = input.int(10, "HA Smoothing", minval=1, group="HA")
+
+// ── Heikin-Ashi Calculations ──
+haClose_ = (open + high + low + close) / 4
+var float haOpen_ = na
+haOpen_  := na(haOpen_[1]) ? (open + close) / 2 : (nz(haOpen_[1]) + nz(haClose_[1])) / 2
+haHigh_  = math.max(high, math.max(haOpen_, haClose_))
+haLow_   = math.min(low, math.min(haOpen_, haClose_))
+
+// Smoothed HA
+sHaClose = ta.ema(haClose_, haLen)
+sHaOpen  = ta.ema(haOpen_, haLen)
+
+// ── Signals ──
+haBull = sHaClose > sHaOpen
+haBear = sHaClose < sHaOpen
+longSig_  = haBull and not haBull[1]
+shortSig_ = haBear and not haBear[1]
+
+// Use [1] for no lookahead
+if longSig_[1]
+    strategy.entry("Long", strategy.long)
+if shortSig_[1]
+    strategy.entry("Short", strategy.short)
+
+// ── Plots ──
+col_ = haBull ? color.green : color.red
+plotcandle(sHaOpen, haHigh_, haLow_, sHaClose, "Smoothed HA", col_, col_)
+`,
+
+  // ── Correlation Heatmap ──
+  correlation_heatmap: `//@version=6
+indicator("Correlation Heatmap", overlay=false, max_tables_count=1)
+
+grp = "Assets"
+sym1_ = input.symbol("SPY",  "Asset 1", group=grp)
+sym2_ = input.symbol("QQQ",  "Asset 2", group=grp)
+sym3_ = input.symbol("TLT",  "Asset 3", group=grp)
+sym4_ = input.symbol("GLD",  "Asset 4", group=grp)
+sym5_ = input.symbol("BTC",  "Asset 5", group=grp)
+corrPeriod = input.int(20, "Period", group="Settings")
+
+c1_ = request.security(sym1_, "D", close, lookahead=barmerge.lookahead_off)
+c2_ = request.security(sym2_, "D", close, lookahead=barmerge.lookahead_off)
+c3_ = request.security(sym3_, "D", close, lookahead=barmerge.lookahead_off)
+c4_ = request.security(sym4_, "D", close, lookahead=barmerge.lookahead_off)
+c5_ = request.security(sym5_, "D", close, lookahead=barmerge.lookahead_off)
+
+r1 = ta.change(c1_), r2 = ta.change(c2_), r3 = ta.change(c3_), r4 = ta.change(c4_), r5 = ta.change(c5_)
+
+if barstate.islast
+    var table t = table.new(position.middle_center, 6, 6, bgcolor=color.new(color.black, 80), border_width=1)
+
+    f_col(float v) => v > 0.7 ? color.green : v < -0.7 ? color.red : v > 0.3 ? color.new(color.green, 50) : v < -0.3 ? color.new(color.red, 50) : color.gray
+
+    syms = array.from(sym1_, sym2_, sym3_, sym4_, sym5_)
+    rets = array.from(r1, r2, r3, r4, r5)
+
+    // Headers
+    table.cell(t, 0, 0, "", text_color=color.gray, text_size=size.tiny)
+    for i = 0 to 4
+        table.cell(t, i + 1, 0, array.get(syms, i), text_color=color.white, text_size=size.tiny)
+        table.cell(t, 0, i + 1, array.get(syms, i), text_color=color.white, text_size=size.tiny)
+
+    // Correlation cells (manual due to Pine limitations)
+    corr12 = ta.correlation(r1, r2, corrPeriod)
+    corr13 = ta.correlation(r1, r3, corrPeriod)
+    corr14 = ta.correlation(r1, r4, corrPeriod)
+    corr15 = ta.correlation(r1, r5, corrPeriod)
+    corr23 = ta.correlation(r2, r3, corrPeriod)
+    corr24 = ta.correlation(r2, r4, corrPeriod)
+    corr25 = ta.correlation(r2, r5, corrPeriod)
+    corr34 = ta.correlation(r3, r4, corrPeriod)
+    corr35 = ta.correlation(r3, r5, corrPeriod)
+    corr45 = ta.correlation(r4, r5, corrPeriod)
+
+    // Row 1
+    table.cell(t, 1, 1, "1.00", bgcolor=color.green, text_color=color.white, text_size=size.tiny)
+    table.cell(t, 2, 1, str.tostring(corr12, "#.##"), bgcolor=f_col(corr12), text_color=color.white, text_size=size.tiny)
+    table.cell(t, 3, 1, str.tostring(corr13, "#.##"), bgcolor=f_col(corr13), text_color=color.white, text_size=size.tiny)
+    table.cell(t, 4, 1, str.tostring(corr14, "#.##"), bgcolor=f_col(corr14), text_color=color.white, text_size=size.tiny)
+    table.cell(t, 5, 1, str.tostring(corr15, "#.##"), bgcolor=f_col(corr15), text_color=color.white, text_size=size.tiny)
+`,
+
+  // ── ADR / Range Analysis ──
+  adr_range_analysis: `//@version=6
+indicator("ADR / Range Analysis", overlay=true, max_tables_count=1)
+
+// ── Inputs ──
+adrLen_ = input.int(14, "ADR Period", minval=5, group="ADR")
+
+// Daily H-L range
+dailyRange = request.security(syminfo.tickerid, "D", high - low, lookahead=barmerge.lookahead_off)
+dailyHigh_ = request.security(syminfo.tickerid, "D", high, lookahead=barmerge.lookahead_off)
+dailyLow_  = request.security(syminfo.tickerid, "D", low, lookahead=barmerge.lookahead_off)
+
+adr = ta.sma(dailyRange, adrLen_)
+adrPct = adr / close * 100
+todayRange = dailyHigh_ - dailyLow_
+todayPct   = todayRange / adr * 100
+
+// ADR targets
+adrMid_ = dailyLow_ + adr / 2
+adrUp_  = dailyLow_ + adr
+adrDn_  = dailyHigh_ - adr
+
+plot(adrUp_, "ADR Upper",  color.new(color.green, 40), 1, plot.style_stepline)
+plot(adrDn_, "ADR Lower",  color.new(color.red, 40),   1, plot.style_stepline)
+
+if barstate.islast
+    var table t = table.new(position.bottom_left, 2, 4, bgcolor=color.new(color.black, 80), border_width=1, border_color=color.gray)
+    table.cell(t, 0, 0, "ADR",     text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 0, str.tostring(adr, "#.##"),  text_color=color.white, text_size=size.small)
+    table.cell(t, 0, 1, "ADR %",   text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 1, str.tostring(adrPct, "#.##") + "%", text_color=color.yellow, text_size=size.small)
+    table.cell(t, 0, 2, "Today",   text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 2, str.tostring(todayRange, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(t, 0, 3, "Used",    text_color=color.gray, text_size=size.small)
+    table.cell(t, 1, 3, str.tostring(todayPct, "#.#") + "%",
+        text_color=todayPct > 100 ? color.red : todayPct > 80 ? color.orange : color.green, text_size=size.small)
+`,
+
+  // ── Liquidation Levels (Crypto) ──
+  liquidation_levels: `//@version=6
+indicator("Liquidation Level Estimator", overlay=true, max_lines_count=20, max_labels_count=10)
+
+// ── Inputs ──
+grp = "Liquidation"
+leverages = input.string("5,10,25,50,100", "Leverage Levels", group=grp)
+direction = input.string("Both", "Direction", options=["Long", "Short", "Both"], group=grp)
+refPrice  = input.string("Current", "Reference Price", options=["Current", "Daily Open"], group=grp)
+
+// ── Reference Price ──
+dailyOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+ref = refPrice == "Current" ? close : dailyOpen
+
+// ── Parse leverage levels ──
+levArr = str.split(leverages, ",")
+
+if barstate.islast
+    for i = 0 to array.size(levArr) - 1
+        lev = str.tonumber(array.get(levArr, i))
+        if not na(lev) and lev > 0
+            // Long liquidation: price dropped enough to wipe margin
+            longLiq  = ref * (1 - 1 / lev)
+            // Short liquidation: price rose enough
+            shortLiq = ref * (1 + 1 / lev)
+
+            levStr = str.tostring(lev, "#") + "x"
+
+            if direction != "Short"
+                line.new(bar_index - 50, longLiq, bar_index + 10, longLiq,
+                    color=color.new(color.red, 40), width=1, style=line.style_dashed)
+                label.new(bar_index + 10, longLiq, levStr + " Long Liq",
+                    color=color.new(color.red, 70), textcolor=color.red, size=size.tiny, style=label.style_label_left)
+
+            if direction != "Long"
+                line.new(bar_index - 50, shortLiq, bar_index + 10, shortLiq,
+                    color=color.new(color.green, 40), width=1, style=line.style_dashed)
+                label.new(bar_index + 10, shortLiq, levStr + " Short Liq",
+                    color=color.new(color.green, 70), textcolor=color.green, size=size.tiny, style=label.style_label_left)
+`,
+
+  // ── Volume Delta Oscillator ──
+  volume_delta: `//@version=6
+indicator("Volume Delta Oscillator", overlay=false)
+
+// ── Inputs ──
+grp = "Delta"
+maLen_  = input.int(14, "MA Length", group=grp)
+smooth_ = input.int(3, "Smoothing", group=grp)
+
+// ── Delta Calculation ──
+buyVol   = volume * (close - low) / (high - low)
+sellVol  = volume - buyVol
+delta_   = buyVol - sellVol
+smoothDelta = ta.ema(delta_, smooth_)
+deltaMA  = ta.sma(smoothDelta, maLen_)
+
+// ── Cumulative Delta ──
+var float cumDelta_ = 0.0
+cumDelta_ += delta_
+
+// ── Plots ──
+col = smoothDelta >= 0 ?
+    (smoothDelta >= smoothDelta[1] ? color.green : color.new(color.green, 50)) :
+    (smoothDelta <= smoothDelta[1] ? color.red : color.new(color.red, 50))
+
+plot(smoothDelta, "Delta", col, 2, plot.style_histogram)
+plot(deltaMA, "Delta MA", color.orange, 1)
+hline(0, "Zero", color.gray)
+plot(cumDelta_ / volume * 10, "Cum Delta (scaled)", color.new(color.blue, 60), 1)
+`,
+
+};
+
+// Merge pro templates into main TEMPLATES
+Object.assign(TEMPLATES, PRO_TEMPLATES);

@@ -2,8 +2,11 @@
  * Pine Script v6 Utilities
  * Combines static analysis from pine-script-v6-extension with
  * live TradingView compilation via the MCP server.
+ * Enhanced with linter integration, OakScript validation, and deep analysis.
  */
 import { pine, capture } from '../mcp/client.js';
+import { lintPineScript, detectsRepainting, auditStrategy } from './linter.js';
+import { taCore, BacktestEngine } from './oakscript.js';
 
 // ── Static Analysis (offline, no TV needed) ──
 
@@ -268,5 +271,101 @@ export async function developScript(source, opts = {}) {
     phase: 'compile',
     errors: lastErrors,
     message: 'Max compile retries reached',
+  };
+}
+
+// ── Deep Analysis Functions ──
+
+/**
+ * Run comprehensive analysis: static + linter + repainting + strategy audit.
+ * @param {string} source Pine Script v6 source
+ * @param {object} [opts]
+ * @param {boolean} [opts.skipLinter=false]
+ * @param {boolean} [opts.skipRepainting=false]
+ * @returns {{ static, lint, repainting, strategyAudit, quality }}
+ */
+export function analyzeDeep(source, opts = {}) {
+  const staticResult = analyzeStatic(source);
+  const lintResult = opts.skipLinter ? null : lintPineScript(source);
+  const repaintResult = opts.skipRepainting ? null : detectsRepainting(source);
+  const stratAudit = staticResult.type === 'strategy' ? auditStrategy(source) : null;
+
+  // Composite quality score
+  let quality = 100;
+  quality -= (staticResult.summary.errors * 15);
+  quality -= (staticResult.summary.warnings * 5);
+  if (lintResult) {
+    quality = Math.min(quality, lintResult.score);
+  }
+  if (repaintResult) {
+    quality -= repaintResult * 20;  // each repainting issue = -20
+  }
+  if (stratAudit && !stratAudit.clean) {
+    quality -= Object.values(stratAudit.checks).filter(v => v === false).length * 10;
+  }
+  quality = Math.max(0, Math.min(100, quality));
+
+  const grade = quality >= 90 ? 'A' : quality >= 75 ? 'B' : quality >= 60 ? 'C'
+    : quality >= 40 ? 'D' : 'F';
+
+  return {
+    static: staticResult,
+    lint: lintResult,
+    repaintingIssues: repaintResult,
+    strategyAudit: stratAudit,
+    quality: { score: quality, grade },
+  };
+}
+
+/**
+ * Validate strategy logic using OakScript backtest engine on provided OHLCV data.
+ * @param {Array<{time, open, high, low, close, volume}>} bars OHLCV data
+ * @param {Array<{bar: number, side: 'long'|'short'}>} signals Entry signals
+ * @param {object} [opts] Backtest config
+ * @returns {{ trades, sharpe, maxDrawdown, profitFactor, kellyPercent, grade }}
+ */
+export function backtestValidate(bars, signals, opts = {}) {
+  const engine = new BacktestEngine(opts);
+  return engine.run(bars, signals);
+}
+
+/**
+ * Extract numerical parameters from Pine source for offline Monte Carlo.
+ * @param {string} source Pine Script source
+ * @returns {Array<{name: string, value: number, line: number}>}
+ */
+export function extractParameters(source) {
+  const params = [];
+  const lines = source.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/input\.(int|float)\(([^,]+),\s*"([^"]+)"/);
+    if (m) {
+      const val = parseFloat(m[2]);
+      if (!isNaN(val)) {
+        params.push({ name: m[3], value: val, line: i + 1 });
+      }
+    }
+  }
+  return params;
+}
+
+/**
+ * Compute local TA values from OHLCV using OakScript engine.
+ * @param {number[]} closes Close prices
+ * @param {object} [opts]
+ * @returns {{ rsi14, ema20, ema50, atr14, bbUpper, bbLower, macd, macdSignal }}
+ */
+export function computeIndicators(closes, opts = {}) {
+  const len = closes.length;
+  if (len < 50) return null;
+  return {
+    rsi14: taCore.rsi(closes, 14),
+    ema20: taCore.ema(closes, 20),
+    ema50: taCore.ema(closes, 50),
+    atr14: opts.highs && opts.lows ? taCore.atr(opts.highs, opts.lows, closes, 14) : null,
+    bbands: taCore.bbands(closes, 20, 2),
+    macd: taCore.macd(closes, 12, 26, 9),
+    stoch: opts.highs && opts.lows ? taCore.stoch(opts.highs, opts.lows, closes, 14, 3, 3) : null,
+    adx: opts.highs && opts.lows ? taCore.adx(opts.highs, opts.lows, closes, 14) : null,
   };
 }

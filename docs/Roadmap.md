@@ -10,6 +10,11 @@ OpenTrade is actively developed. This page tracks what's planned, in progress, a
 
 - **7 professional skills** — Chart Analysis, Quant Analysis, Hedge Fund, HFT Microstructure, Portfolio Scanner, Macro Regime, Strategy Backtest
 - **11 Pine Script v6 templates** — including institutional quant strategies (z-score MR, VWAP institutional, momentum factor, ORB, multi-factor dashboard)
+- **9 new skills (v2)** — Chart Layout Pro, Institutional Drawing, Prediction Markets (Polymarket/Kalshi), On-Chain Analytics (DefiLlama/CoinGecko/CoinGlass/RedStone), Sentiment Feeds, Market Data Universal, Broker Integration, Liquidity Analysis, Financial Instruments
+- **6 new Pine templates (v2)** — Liquidity Heatmap, Session Structure Map, Funding Rate Overlay, Multi-Asset Correlation, Institutional Order Flow, Macro Regime Dashboard
+- **External data integration** — Polymarket, Kalshi, DefiLlama, CoinGecko, CoinGlass, RedStone, Fear & Greed Index, funding rates, social sentiment
+- **Broker + execution knowledge** — IBKR, Alpaca, MetaQuotes MT4/MT5, webhook integration patterns, commission tables
+- **Complete instrument coverage** — Equities, futures (ES/NQ/CL/GC/ZN), forex, options, crypto, fixed income, commodities with contract specs and factor knowledge
 - **Self-contained architecture** — no external repos required, full CDP engine embedded
 - **Static Pine analyzer** — offline error detection before TradingView
 - **Browser UI** — WebSocket streaming with inline screenshots
@@ -55,19 +60,9 @@ Statistical arbitrage setup detection using co-integration, spread z-score, and 
 
 ### Medium Priority
 
-#### Multi-Chart Layout Control
-Switch between and analyze multiple chart panes simultaneously.
-```
-"Open a 4-panel layout with SPY, QQQ, IWM, and VIX"
-"Analyze all four panes and compare structures"
-```
+#### ~~Multi-Chart Layout Control~~ ✅ SHIPPED (chart-layout-pro skill)
 
-#### Footprint / Order Flow Imbalance
-Read delta and volume imbalance data from footprint chart indicators.
-```
-"What's the cumulative delta on ES today?"
-"Show me where the aggressive buying is happening"
-```
+#### ~~Footprint / Order Flow Imbalance~~ ✅ SHIPPED (institutional_order_flow template + liquidity-analysis skill)
 
 #### Portfolio P&L Tracking
 Track paper trades made through replay across sessions, calculate overall portfolio performance.
@@ -90,12 +85,7 @@ Package OpenTrade as an official Claude Code skill installable via `npx skillsad
 npx skillsadd brandononchain/opentrade
 ```
 
-#### Economic Calendar Integration
-Pull earnings dates, Fed meetings, CPI releases and factor them into analysis.
-```
-"What economic events are this week that could affect my position?"
-"When does NVDA report earnings?"
-```
+#### ~~Economic Calendar Integration~~ ✅ SHIPPED (market-data-universal + financial-instruments skills)
 
 #### Insider Flow and Dark Pool Data
 Integrate with public data sources for unusual options activity and dark pool prints.
@@ -121,6 +111,15 @@ When a strategy underperforms, automatically diagnose why — overfitting, regim
 | Multi-tool API fix | v0.3 |
 | Pure ASCII terminal banner | v0.3 |
 | Auto .env loading | v0.3 |
+| Chart Layout Pro + Institutional Drawing skills | v0.5 |
+| Prediction Markets (Polymarket/Kalshi) skill | v0.5 |
+| On-Chain Analytics (DefiLlama/CoinGlass/RedStone) skill | v0.5 |
+| Sentiment Feeds (F&G, funding, social) skill | v0.5 |
+| Market Data Universal skill | v0.5 |
+| Broker Integration (IBKR/Alpaca/MT5) skill | v0.5 |
+| Liquidity Analysis skill | v0.5 |
+| Financial Instruments knowledge base skill | v0.5 |
+| 6 new Pine templates (liquidity, sessions, funding, correlation, order flow, macro) | v0.5 |
 
 ---
 

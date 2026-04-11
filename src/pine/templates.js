@@ -697,3 +697,479 @@ if barstate.islast
 
 // Merge quant templates into main TEMPLATES
 Object.assign(TEMPLATES, QUANT_TEMPLATES);
+
+// ============================================================================
+// EXTERNAL_TEMPLATES - Production Pine Script v6 Templates
+// ============================================================================
+
+const EXTERNAL_TEMPLATES = {
+
+    liquidity_heatmap: {
+        name: "Liquidity Heatmap",
+        description: "Volume concentration zones with POC, VAH/VAL, HVN/LVN bands",
+        category: "advanced",
+        code: `
+//@version=6
+indicator("Liquidity Heatmap", overlay=true, max_boxes_count=500, max_tables_count=1)
+
+lookback = input.int(50, "Lookback Period", minval=10, maxval=500, group="Liquidity")
+hvnThreshold = input.float(1.2, "HVN Threshold", minval=1.0, maxval=2.0, group="Liquidity")
+lvnThreshold = input.float(0.5, "LVN Threshold", minval=0.1, maxval=1.0, group="Liquidity")
+
+// Volume profile calculation
+totalVol = 0.0
+priceSum = 0.0
+priceWeightedVol = 0.0
+
+for i = 0 to lookback - 1
+    barVol = volume[i]
+    barClose = close[i]
+    totalVol += barVol
+    priceWeightedVol += barClose * barVol
+
+pocPrice = totalVol > 0 ? priceWeightedVol / totalVol : close
+
+// Calculate VAH/VAL (70% volume range)
+sortedVol = 0.0
+vahPrice = pocPrice
+valPrice = pocPrice
+
+for i = 0 to lookback - 1
+    sortedVol += volume[i]
+    if sortedVol <= totalVol * 0.85
+        vahPrice = high[i]
+    if sortedVol <= totalVol * 0.15
+        valPrice = low[i]
+
+avgVolume = totalVol / lookback
+hvnZone = avgVolume * hvnThreshold
+lvnZone = avgVolume * lvnThreshold
+
+// Draw liquidity zones
+if barstate.islast
+    // HVN (high volume node) - green
+    if volume[0] > hvnZone
+        box.new(bar_index - lookback, valPrice, bar_index, vahPrice,
+            bgcolor=color.new(color.green, 80), border_color=color.green)
+
+    // LVN (low volume node) - red
+    if volume[0] < lvnZone
+        box.new(bar_index - lookback, valPrice, bar_index, vahPrice,
+            bgcolor=color.new(color.red, 80), border_color=color.red)
+
+    // Display table
+    t = table.new(position.top_right, 4, 2, border_color=color.gray)
+    table.cell(t, 0, 0, "POC", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 0, str.tostring(pocPrice, "#.##"), text_color=color.white)
+    table.cell(t, 0, 1, "VAH", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 1, str.tostring(vahPrice, "#.##"), text_color=color.white)
+    table.cell(t, 2, 0, "VAL", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 3, 0, str.tostring(valPrice, "#.##"), text_color=color.white)
+    table.cell(t, 2, 1, "Vol%", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 3, 1, str.tostring(avgVolume > 0 ? volume[0] / avgVolume : 0, "#.##"), text_color=color.white)
+
+// Plot POC line
+plot(pocPrice, "POC", color.blue, 2)
+plot(vahPrice, "VAH", color.green, 1, linestyle=plot.style_dashed)
+plot(valPrice, "VAL", color.red, 1, linestyle=plot.style_dashed)
+`,
+    },
+
+    session_structure_map: {
+        name: "Session Structure Map",
+        description: "NY, London, Asia sessions with VWAP and opening range",
+        category: "advanced",
+        code: `
+//@version=6
+indicator("Session Structure Map", overlay=true, max_lines_count=50, max_labels_count=20, max_tables_count=1)
+
+// Session inputs
+showNY = input.bool(true, "NY Session", group="Sessions")
+showLondon = input.bool(true, "London Session", group="Sessions")
+showAsia = input.bool(true, "Asia Session", group="Sessions")
+
+// Session times (24h format, UTC-5 for NY)
+nyOpen = 14    // 9:30 ET = 14:30 UTC
+nyClose = 21   // 4:00 PM ET = 21:00 UTC
+lonOpen = 8    // 3:00 AM ET = 8:00 UTC
+lonClose = 16  // 11:30 AM ET = 16:30 UTC
+asiaOpen = 1   // 8:00 PM ET = 1:00 UTC
+asiaClose = 9  // 4:00 AM ET = 9:00 UTC
+
+// VWAP calculation
+cumVol = 0.0
+cumTypVol = 0.0
+typPrice = (high + low + close) / 3
+
+for i = 0 to 29
+    cumVol += volume[i]
+    cumTypVol += typPrice[i] * volume[i]
+
+vwap = cumVol > 0 ? cumTypVol / cumVol : close
+vwapStdDev = ta.stdev(typPrice * volume, 20)
+
+// Previous session levels
+pdh = high[1]
+pdl = low[1]
+pdc = close[1]
+
+// Opening range (first 30 min)
+orHigh = high[0]
+orLow = low[0]
+
+if barstate.islast
+    // Draw NY session levels
+    if showNY
+        line.new(bar_index - 30, pdh, bar_index, pdh, color=color.new(color.orange, 60), width=1)
+        label.new(bar_index, pdh, "PDH", color=color.orange, textcolor=color.white, style=label.style_label_center, size=size.small)
+
+    // Draw London session levels
+    if showLondon
+        line.new(bar_index - 30, pdl, bar_index, pdl, color=color.new(color.purple, 60), width=1)
+        label.new(bar_index, pdl, "PDL", color=color.purple, textcolor=color.white, style=label.style_label_center, size=size.small)
+
+    // Draw Asia session levels
+    if showAsia
+        line.new(bar_index - 30, pdc, bar_index, pdc, color=color.new(color.teal, 60), width=1)
+        label.new(bar_index, pdc, "PDC", color=color.teal, textcolor=color.white, style=label.style_label_center, size=size.small)
+
+    // VWAP with bands
+    plot(vwap, "VWAP", color.blue, 2)
+    plot(vwap + vwapStdDev, "VWAP+1σ", color.new(color.blue, 50), 1)
+    plot(vwap - vwapStdDev, "VWAP-1σ", color.new(color.blue, 50), 1)
+
+    // Session structure table
+    t = table.new(position.top_left, 3, 5, border_color=color.gray)
+    table.cell(t, 0, 0, "Level", bgcolor=color.gray, text_color=color.white)
+    table.cell(t, 1, 0, "Price", bgcolor=color.gray, text_color=color.white)
+    table.cell(t, 2, 0, "Distance", bgcolor=color.gray, text_color=color.white)
+
+    table.cell(t, 0, 1, "NY High", text_color=color.orange)
+    table.cell(t, 1, 1, str.tostring(pdh, "#.##"))
+    table.cell(t, 2, 1, str.tostring(close - pdh, "#.##"))
+
+    table.cell(t, 0, 2, "London Low", text_color=color.purple)
+    table.cell(t, 1, 2, str.tostring(pdl, "#.##"))
+    table.cell(t, 2, 2, str.tostring(close - pdl, "#.##"))
+
+    table.cell(t, 0, 3, "VWAP", text_color=color.blue)
+    table.cell(t, 1, 3, str.tostring(vwap, "#.##"))
+    table.cell(t, 2, 3, str.tostring(close - vwap, "#.##"))
+
+    table.cell(t, 0, 4, "OR High", text_color=color.cyan)
+    table.cell(t, 1, 4, str.tostring(orHigh, "#.##"))
+    table.cell(t, 2, 4, str.tostring(close - orHigh, "#.##"))
+`,
+    },
+
+    funding_rate_overlay: {
+        name: "Funding Rate Overlay",
+        description: "Basis and z-score analysis for perpetual futures",
+        category: "advanced",
+        code: `
+//@version=6
+indicator("Funding Rate Overlay", overlay=false, max_tables_count=1)
+
+basisLength = input.int(20, "Basis Period", minval=5, maxval=100, group="Funding")
+smaLength = input.int(50, "SMA Period", minval=10, maxval=200, group="Funding")
+zscoreThreshold = input.float(2.0, "Z-Score Extreme", minval=1.0, maxval=3.0, group="Funding")
+
+// Calculate basis as (price - SMA) / SMA proxy for funding
+smaPrice = ta.sma(close, smaLength)
+basis = (close - smaPrice) / smaPrice
+
+// Z-score of basis
+basisMean = ta.sma(basis, basisLength)
+basisStdDev = ta.stdev(basis, basisLength)
+basisZscore = basisStdDev > 0 ? (basis - basisMean) / basisStdDev : 0
+
+// Color coding
+histColor = basis > 0 ? color.green : color.red
+isExtreme = math.abs(basisZscore) > zscoreThreshold
+bgColor = isExtreme ? (basisZscore > 0 ? color.new(color.green, 85) : color.new(color.red, 85)) : color.new(color.gray, 95)
+
+// Plot histogram
+plot(basis * 100, "Basis %", histColor, 2, plot.style_histogram)
+plot(0, "Zero Line", color.gray, 1)
+
+// Background coloring for extreme regimes
+bgcolor(bgColor)
+
+// Regime classification
+regime = isExtreme ? (basisZscore > 0 ? "Overleveraged" : "Oversold") : "Normal"
+
+// Display table
+if barstate.islast
+    t = table.new(position.top_right, 2, 4, border_color=color.gray)
+    table.cell(t, 0, 0, "Metric", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 0, "Value", bgcolor=color.blue, text_color=color.white)
+
+    table.cell(t, 0, 1, "Basis", text_color=color.gray)
+    table.cell(t, 1, 1, str.tostring(basis * 100, "#.##%"),
+        text_color = basis > 0 ? color.green : color.red)
+
+    table.cell(t, 0, 2, "Z-Score", text_color=color.gray)
+    table.cell(t, 1, 2, str.tostring(basisZscore, "#.##"),
+        text_color = math.abs(basisZscore) > 1.5 ? color.orange : color.gray)
+
+    table.cell(t, 0, 3, "Regime", text_color=color.gray)
+    table.cell(t, 1, 3, regime,
+        text_color = isExtreme ? color.orange : color.green)
+`,
+    },
+
+    multi_asset_correlation: {
+        name: "Multi-Asset Correlation",
+        description: "Rolling correlation dashboard with 4 symbols",
+        category: "advanced",
+        code: `
+//@version=6
+indicator("Multi-Asset Correlation", overlay=false, max_tables_count=1)
+
+// Correlation symbol inputs
+sym1 = input.symbol("SPY", "Asset 1", group="Symbols")
+sym2 = input.symbol("TLT", "Asset 2", group="Symbols")
+sym3 = input.symbol("GLD", "Asset 3", group="Symbols")
+sym4 = input.symbol("DXY", "Asset 4", group="Symbols")
+
+corrLength = input.int(20, "Correlation Period", minval=5, maxval=100, group="Correlation")
+
+// Get data for each symbol
+close1 = request.security(sym1, timeframe.period, close)
+close2 = request.security(sym2, timeframe.period, close)
+close3 = request.security(sym3, timeframe.period, close)
+close4 = request.security(sym4, timeframe.period, close)
+
+// Returns
+ret0 = ta.change(close)
+ret1 = ta.change(close1)
+ret2 = ta.change(close2)
+ret3 = ta.change(close3)
+ret4 = ta.change(close4)
+
+// Correlation calculation
+corr1 = ta.correlation(ret0, ret1, corrLength)
+corr2 = ta.correlation(ret0, ret2, corrLength)
+corr3 = ta.correlation(ret0, ret3, corrLength)
+corr4 = ta.correlation(ret0, ret4, corrLength)
+
+// Color coding: green >0.7, red <-0.7, gray neutral
+color1 = corr1 > 0.7 ? color.green : corr1 < -0.7 ? color.red : color.gray
+color2 = corr2 > 0.7 ? color.green : corr2 < -0.7 ? color.red : color.gray
+color3 = corr3 > 0.7 ? color.green : corr3 < -0.7 ? color.red : color.gray
+color4 = corr4 > 0.7 ? color.green : corr4 < -0.7 ? color.red : color.gray
+
+// Plot correlations
+plot(corr1, "Corr 1", color1, 2)
+plot(corr2, "Corr 2", color2, 2)
+plot(corr3, "Corr 3", color3, 2)
+plot(corr4, "Corr 4", color4, 2)
+hline(0.7, "Positive Threshold", color.green, linestyle=plot.style_dashed)
+hline(-0.7, "Negative Threshold", color.red, linestyle=plot.style_dashed)
+hline(0, "Zero", color.gray)
+
+// Display table
+if barstate.islast
+    t = table.new(position.top_right, 3, 5, border_color=color.gray)
+    table.cell(t, 0, 0, "Asset", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 0, "Correlation", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 2, 0, "Regime", bgcolor=color.blue, text_color=color.white)
+
+    table.cell(t, 0, 1, str.tostring(sym1), text_color=color.gray)
+    table.cell(t, 1, 1, str.tostring(corr1, "#.##"), text_color=color1)
+    table.cell(t, 2, 1, corr1 > 0.7 ? "Correlated" : corr1 < -0.7 ? "Inverse" : "Neutral", text_color=color1)
+
+    table.cell(t, 0, 2, str.tostring(sym2), text_color=color.gray)
+    table.cell(t, 1, 2, str.tostring(corr2, "#.##"), text_color=color2)
+    table.cell(t, 2, 2, corr2 > 0.7 ? "Correlated" : corr2 < -0.7 ? "Inverse" : "Neutral", text_color=color2)
+
+    table.cell(t, 0, 3, str.tostring(sym3), text_color=color.gray)
+    table.cell(t, 1, 3, str.tostring(corr3, "#.##"), text_color=color3)
+    table.cell(t, 2, 3, corr3 > 0.7 ? "Correlated" : corr3 < -0.7 ? "Inverse" : "Neutral", text_color=color3)
+
+    table.cell(t, 0, 4, str.tostring(sym4), text_color=color.gray)
+    table.cell(t, 1, 4, str.tostring(corr4, "#.##"), text_color=color4)
+    table.cell(t, 2, 4, corr4 > 0.7 ? "Correlated" : corr4 < -0.7 ? "Inverse" : "Neutral", text_color=color4)
+`,
+    },
+
+    institutional_order_flow: {
+        name: "Institutional Order Flow",
+        description: "Block detection and cumulative delta with VWAP bands",
+        category: "advanced",
+        code: `
+//@version=6
+indicator("Institutional Order Flow", overlay=true, max_labels_count=100, max_tables_count=1)
+
+blockThreshold = input.float(2.0, "Block Vol Multiplier", minval=1.0, maxval=5.0, group="Order Flow")
+deltaThreshold = input.float(0.6, "Delta Threshold", minval=0.1, maxval=0.9, group="Order Flow")
+vwapLength = input.int(20, "VWAP Period", minval=5, maxval=100, group="Order Flow")
+
+// Calculate typical price and VWAP
+typPrice = (high + low + close) / 3
+cumVol = 0.0
+cumTypVol = 0.0
+
+for i = 0 to vwapLength - 1
+    cumVol += volume[i]
+    cumTypVol += typPrice[i] * volume[i]
+
+vwap = cumVol > 0 ? cumTypVol / cumVol : close
+vwapStdDev = ta.stdev(typPrice, vwapLength) * 0.5
+
+// Delta volume calculation
+closePos = (close - low) / (high - low)
+delta = closePos * volume
+
+// Cumulative delta
+cumDelta = 0.0
+for i = 0 to 100
+    cumDelta += delta[i]
+
+// Block detection
+avgVol = ta.sma(volume, 20)
+isLargeBlock = volume > avgVol * blockThreshold
+isBlockBuy = isLargeBlock and delta > volume * deltaThreshold
+isBlockSell = isLargeBlock and delta < -volume * deltaThreshold
+
+// Draw block markers
+if isBlockBuy
+    label.new(bar_index, high + (high - low) * 0.5, "▲",
+        color=color.new(color.green, 0), textcolor=color.green, size=size.small, style=label.style_label_center)
+
+if isBlockSell
+    label.new(bar_index, low - (high - low) * 0.5, "▼",
+        color=color.new(color.red, 0), textcolor=color.red, size=size.small, style=label.style_label_center)
+
+// Plot VWAP with bands
+plot(vwap, "VWAP", color.blue, 2)
+plot(vwap + vwapStdDev, "VWAP+σ", color.new(color.blue, 60), 1)
+plot(vwap - vwapStdDev, "VWAP-σ", color.new(color.blue, 60), 1)
+
+// Display table
+if barstate.islast
+    t = table.new(position.bottom_right, 2, 4, border_color=color.gray)
+    table.cell(t, 0, 0, "Metric", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 0, "Value", bgcolor=color.blue, text_color=color.white)
+
+    table.cell(t, 0, 1, "Volume", text_color=color.gray)
+    table.cell(t, 1, 1, str.tostring(volume, "#,##0"))
+
+    table.cell(t, 0, 2, "Delta", text_color=color.gray)
+    table.cell(t, 1, 2, str.tostring(delta, "#,##0"),
+        text_color = delta > 0 ? color.green : color.red)
+
+    table.cell(t, 0, 3, "Cum Delta", text_color=color.gray)
+    table.cell(t, 1, 3, str.tostring(cumDelta, "#,##0"),
+        text_color = cumDelta > 0 ? color.green : color.red)
+`,
+    },
+
+    macro_regime_dashboard: {
+        name: "Macro Regime Dashboard",
+        description: "Comprehensive macro regime classifier with asset signals",
+        category: "advanced",
+        code: `
+//@version=6
+indicator("Macro Regime Dashboard", overlay=false, max_tables_count=1)
+
+// Asset inputs
+equitySymbol = input.symbol("SPY", "Equity (default SPY)", group="Assets")
+bondSymbol = input.symbol("TLT", "Bonds (default TLT)", group="Assets")
+commoditySymbol = input.symbol("GLD", "Commodity (default GLD)", group="Assets")
+dollarSymbol = input.symbol("DXY", "Dollar (default DXY)", group="Assets")
+
+lookbackDays = input.int(20, "Momentum Period", minval=5, maxval=100, group="Macro")
+
+// Request daily data for macro signals
+eqDaily = request.security(equitySymbol, "D", close)
+bondDaily = request.security(bondSymbol, "D", close)
+cmdyDaily = request.security(commoditySymbol, "D", close)
+dxyDaily = request.security(dollarSymbol, "D", close)
+
+// Calculate 20-day returns
+eqReturn = (eqDaily - eqDaily[lookbackDays]) / eqDaily[lookbackDays]
+bondReturn = (bondDaily - bondDaily[lookbackDays]) / bondDaily[lookbackDays]
+cmdyReturn = (cmdyDaily - cmdyDaily[lookbackDays]) / cmdyDaily[lookbackDays]
+dxyReturn = (dxyDaily - dxyDaily[lookbackDays]) / dxyDaily[lookbackDays]
+
+// Z-scores for regime classification
+eqMean = ta.sma(eqReturn, 20)
+eqStd = ta.stdev(eqReturn, 20)
+eqZscore = eqStd > 0 ? (eqReturn - eqMean) / eqStd : 0
+
+bondMean = ta.sma(bondReturn, 20)
+bondStd = ta.stdev(bondReturn, 20)
+bondZscore = bondStd > 0 ? (bondReturn - bondMean) / bondStd : 0
+
+// Regime classification logic
+isGrowthHigh = eqZscore > 0.5
+isInflationHigh = bondZscore < -0.5
+isGoldilocks = isGrowthHigh and not isInflationHigh
+isStagflation = (isGrowthHigh and isInflationHigh) or (not isGrowthHigh and isInflationHigh)
+isDeflation = not isGrowthHigh and not isInflationHigh
+
+regime = isGoldilocks ? "Goldilocks" : isStagflation ? "Stagflation" : isDeflation ? "Deflation" : "Recovery"
+
+regimeColor = isGoldilocks ? color.new(color.green, 70) :
+              isStagflation ? color.new(color.orange, 70) :
+              isDeflation ? color.new(color.blue, 70) :
+              color.new(color.purple, 70)
+
+// Background
+bgcolor(regimeColor)
+
+// Display regime dashboard
+if barstate.islast
+    t = table.new(position.top_left, 3, 7, border_color=color.gray)
+    table.cell(t, 0, 0, "Asset", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 0, "Signal", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 2, 0, "Direction", bgcolor=color.blue, text_color=color.white)
+
+    // Equity row
+    table.cell(t, 0, 1, str.tostring(equitySymbol), text_color=color.gray)
+    table.cell(t, 1, 1, str.tostring(eqReturn * 100, "#.##%"),
+        text_color = eqReturn > 0 ? color.green : color.red)
+    table.cell(t, 2, 1, eqZscore > 0.5 ? "Strong ↑" : eqZscore < -0.5 ? "Weak ↓" : "Neutral →",
+        text_color = eqZscore > 0 ? color.green : eqZscore < 0 ? color.red : color.gray)
+
+    // Bond row
+    table.cell(t, 0, 2, str.tostring(bondSymbol), text_color=color.gray)
+    table.cell(t, 1, 2, str.tostring(bondReturn * 100, "#.##%"),
+        text_color = bondReturn > 0 ? color.green : color.red)
+    table.cell(t, 2, 2, bondZscore > 0.5 ? "Rising ↑" : bondZscore < -0.5 ? "Falling ↓" : "Stable →",
+        text_color = bondZscore > 0 ? color.green : bondZscore < 0 ? color.red : color.gray)
+
+    // Commodity row
+    table.cell(t, 0, 3, str.tostring(commoditySymbol), text_color=color.gray)
+    table.cell(t, 1, 3, str.tostring(cmdyReturn * 100, "#.##%"),
+        text_color = cmdyReturn > 0 ? color.green : color.red)
+    table.cell(t, 2, 3, cmdyReturn > 0 ? "Bid ↑" : "Offer ↓",
+        text_color = cmdyReturn > 0 ? color.green : color.red)
+
+    // Dollar row
+    table.cell(t, 0, 4, str.tostring(dollarSymbol), text_color=color.gray)
+    table.cell(t, 1, 4, str.tostring(dxyReturn * 100, "#.##%"),
+        text_color = dxyReturn > 0 ? color.green : color.red)
+    table.cell(t, 2, 4, dxyReturn > 0 ? "Strong ↑" : "Weak ↓",
+        text_color = dxyReturn > 0 ? color.green : color.red)
+
+    // Risk appetite
+    riskAppetite = (eqZscore - bondZscore) / 2
+    table.cell(t, 0, 5, "Risk Appetite", bgcolor=color.gray, text_color=color.white)
+    table.cell(t, 1, 5, str.tostring(riskAppetite, "#.##"),
+        text_color = riskAppetite > 0 ? color.green : color.red)
+    table.cell(t, 2, 5, riskAppetite > 0 ? "Risk On" : "Risk Off",
+        text_color = riskAppetite > 0 ? color.green : color.red)
+
+    // Regime row
+    table.cell(t, 0, 6, "REGIME", bgcolor=regimeColor, text_color=color.white)
+    table.cell(t, 1, 6, regime, bgcolor=regimeColor, text_color=color.white)
+    table.cell(t, 2, 6, "Active", bgcolor=regimeColor, text_color=color.white)
+`,
+    },
+
+};
+
+// Merge external templates into main TEMPLATES
+Object.assign(TEMPLATES, EXTERNAL_TEMPLATES);

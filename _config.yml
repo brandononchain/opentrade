@@ -1,0 +1,26 @@
+# GitHub Pages config — exclude source code from Jekyll processing
+exclude:
+  - src/
+  - node_modules/
+  - tests/
+  - "*.js"
+  - "*.json"
+  - "*.lock"
+  - .env
+  - .env.example
+  - CLAUDE.md
+  - package.json
+  - package-lock.json
+  - tsconfig.json
+  - .github/
+  - screenshots/
+  - dist/
+
+include:
+  - docs/
+  - README.md
+  - ABOUT.md
+
+title: OpenTrade
+description: Open-source TradingView AI agent powered by Claude
+theme: jekyll-theme-primer

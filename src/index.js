@@ -50,6 +50,35 @@ export { Series, BarData, taCore, ta, math, BacktestEngine } from './pine/oakscr
 // ── Charts / Lightweight Charts Plugins ──
 export { generateChartHTML, generateMultiPaneHTML, generatePluginPine, listPlugins, CUSTOM_SERIES, DRAWING_PRIMITIVES } from './charts/plugins.js';
 
+// ── Quantitative Research (institutional analytics) ──
+export {
+  // returns
+  logReturns, pctReturns, cumulativeReturn, annualize,
+  // moments
+  mean, variance, stdev, skewness, kurtosis,
+  // risk-adjusted
+  sharpeRatio, sortinoRatio, calmarRatio, omegaRatio, informationRatio,
+  // drawdown
+  equityCurveFromReturns, maxDrawdown, underwaterCurve,
+  // VaR
+  historicalVaR, historicalCVaR, parametricVaR,
+  // time-series
+  autocorrelation, hurstExponent, halfLife, rollingBeta, rollingCorrelation,
+  // vol models
+  ewmaVolatility, realizedVolatility, garmanKlass,
+  // sizing
+  kellyFraction, volTargetSize, fixedFractional,
+  // portfolio
+  riskParityWeights, equalWeights, minVarianceWeights, covarianceMatrix, portfolioReturn,
+  // monte carlo
+  monteCarloBootstrap,
+  // regime + tearsheet
+  classifyRegime, performanceReport,
+} from './pine/quant-research.js';
+
+// ── Seamless TradingView Quant Tooling ──
+export { quantReport, quantScan } from './tv/quant-report.js';
+
 // ── Streaming / Monitoring ──
 export { watchChart, scanSymbols, watchIndicator } from './agent/stream.js';
 

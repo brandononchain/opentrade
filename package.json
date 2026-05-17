@@ -13,8 +13,8 @@
     "server": "node src/web/server.js",
     "dev": "node src/web/server.js --dev",
     "build": "node scripts/build.js",
-    "test": "node --test tests/*.test.js",
-    "test:unit": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js src/**/__tests__/*.test.js",
+    "test:unit": "node --test tests/*.test.js src/**/__tests__/*.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.36.3",

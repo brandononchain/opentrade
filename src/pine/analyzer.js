@@ -4,7 +4,9 @@
  * live TradingView compilation via the MCP server.
  * Enhanced with linter integration, OakScript validation, and deep analysis.
  */
-import { pine, capture } from '../mcp/client.js';
+// CDP-touching imports (pine, capture) are deferred to function scope
+// so static-analysis consumers (and their tests) don't pull in
+// chrome-remote-interface unnecessarily.
 import { lintPineScript, detectsRepainting, auditStrategy } from './linter.js';
 import { taCore, BacktestEngine } from './oakscript.js';
 
@@ -215,6 +217,8 @@ export async function developScript(source, opts = {}) {
       return { success: false, phase: 'static_analysis', issues: staticResult.issues };
     }
   }
+
+  const { pine, capture } = await import('../mcp/client.js');
 
   // Step 2: Server-side check (no chart needed)
   log('🔍 Server-side validation...');

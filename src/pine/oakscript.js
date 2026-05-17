@@ -917,6 +917,209 @@ export const taCore = {
     return cumPV.map((pv, i) => cumV[i] !== 0 ? pv / cumV[i] : NaN);
   },
 
+  // ── Volume / Money Flow ──
+
+  obv(close, volume) {
+    const r = new Array(close.length).fill(0);
+    for (let i = 1; i < close.length; i++) {
+      const dir = close[i] > close[i - 1] ? 1 : close[i] < close[i - 1] ? -1 : 0;
+      r[i] = r[i - 1] + dir * volume[i];
+    }
+    return r;
+  },
+
+  ad(high, low, close, volume) {
+    const r = new Array(close.length).fill(0);
+    for (let i = 0; i < close.length; i++) {
+      const range = high[i] - low[i];
+      const mfm = range !== 0 ? ((close[i] - low[i]) - (high[i] - close[i])) / range : 0;
+      r[i] = (i > 0 ? r[i - 1] : 0) + mfm * volume[i];
+    }
+    return r;
+  },
+
+  cmf(high, low, close, volume, length = 20) {
+    const r = new Array(close.length).fill(NaN);
+    const mfv = new Array(close.length).fill(0);
+    for (let i = 0; i < close.length; i++) {
+      const range = high[i] - low[i];
+      mfv[i] = range !== 0
+        ? (((close[i] - low[i]) - (high[i] - close[i])) / range) * volume[i]
+        : 0;
+    }
+    for (let i = length - 1; i < close.length; i++) {
+      let sumMfv = 0, sumV = 0;
+      for (let j = 0; j < length; j++) { sumMfv += mfv[i - j]; sumV += volume[i - j]; }
+      r[i] = sumV !== 0 ? sumMfv / sumV : 0;
+    }
+    return r;
+  },
+
+  efi(close, volume, length = 13) {
+    const raw = new Array(close.length).fill(0);
+    for (let i = 1; i < close.length; i++) raw[i] = (close[i] - close[i - 1]) * volume[i];
+    return this.ema(raw, length);
+  },
+
+  pvt(close, volume) {
+    const r = new Array(close.length).fill(0);
+    for (let i = 1; i < close.length; i++) {
+      const pctChange = close[i - 1] !== 0 ? (close[i] - close[i - 1]) / close[i - 1] : 0;
+      r[i] = r[i - 1] + pctChange * volume[i];
+    }
+    return r;
+  },
+
+  // ── Trend / Direction ──
+
+  vortex(high, low, close, length = 14) {
+    const vmPlus = new Array(close.length).fill(0);
+    const vmMinus = new Array(close.length).fill(0);
+    const tr = new Array(close.length).fill(0);
+    for (let i = 1; i < close.length; i++) {
+      vmPlus[i] = Math.abs(high[i] - low[i - 1]);
+      vmMinus[i] = Math.abs(low[i] - high[i - 1]);
+      tr[i] = Math.max(high[i] - low[i], Math.abs(high[i] - close[i - 1]), Math.abs(low[i] - close[i - 1]));
+    }
+    const viPlus = new Array(close.length).fill(NaN);
+    const viMinus = new Array(close.length).fill(NaN);
+    for (let i = length; i < close.length; i++) {
+      let sP = 0, sM = 0, sT = 0;
+      for (let j = 0; j < length; j++) { sP += vmPlus[i - j]; sM += vmMinus[i - j]; sT += tr[i - j]; }
+      viPlus[i] = sT !== 0 ? sP / sT : NaN;
+      viMinus[i] = sT !== 0 ? sM / sT : NaN;
+    }
+    return [viPlus, viMinus];
+  },
+
+  trix(source, length = 18) {
+    const e1 = this.ema(source, length);
+    const e2 = this.ema(e1.map(v => isNaN(v) ? 0 : v), length);
+    const e3 = this.ema(e2.map(v => isNaN(v) ? 0 : v), length);
+    const r = new Array(source.length).fill(NaN);
+    for (let i = 1; i < e3.length; i++) {
+      if (!isNaN(e3[i]) && !isNaN(e3[i - 1]) && e3[i - 1] !== 0) {
+        r[i] = ((e3[i] - e3[i - 1]) / e3[i - 1]) * 10000;
+      }
+    }
+    return r;
+  },
+
+  dema(source, length) {
+    const e1 = this.ema(source, length);
+    const e2 = this.ema(e1.map(v => isNaN(v) ? 0 : v), length);
+    return e1.map((v, i) => 2 * v - e2[i]);
+  },
+
+  tema(source, length) {
+    const e1 = this.ema(source, length);
+    const e2 = this.ema(e1.map(v => isNaN(v) ? 0 : v), length);
+    const e3 = this.ema(e2.map(v => isNaN(v) ? 0 : v), length);
+    return e1.map((v, i) => 3 * v - 3 * e2[i] + e3[i]);
+  },
+
+  kama(source, length = 10, fastEnd = 2, slowEnd = 30) {
+    const r = new Array(source.length).fill(NaN);
+    const fastSC = 2 / (fastEnd + 1);
+    const slowSC = 2 / (slowEnd + 1);
+    for (let i = length; i < source.length; i++) {
+      const change = Math.abs(source[i] - source[i - length]);
+      let volatility = 0;
+      for (let j = 0; j < length; j++) volatility += Math.abs(source[i - j] - source[i - j - 1]);
+      const er = volatility !== 0 ? change / volatility : 0;
+      const sc = (er * (fastSC - slowSC) + slowSC) ** 2;
+      const prev = isNaN(r[i - 1]) ? source[i - 1] : r[i - 1];
+      r[i] = prev + sc * (source[i] - prev);
+    }
+    return r;
+  },
+
+  zlema(source, length) {
+    const lag = Math.floor((length - 1) / 2);
+    const adjusted = source.map((v, i) => i >= lag ? 2 * v - source[i - lag] : v);
+    return this.ema(adjusted, length);
+  },
+
+  // ── Advanced Oscillators ──
+
+  fisher(high, low, length = 10) {
+    const r = new Array(high.length).fill(NaN);
+    let prevValue = 0, prevFisher = 0;
+    for (let i = length - 1; i < high.length; i++) {
+      let hh = -Infinity, ll = Infinity;
+      for (let j = 0; j < length; j++) {
+        hh = Math.max(hh, high[i - j]);
+        ll = Math.min(ll, low[i - j]);
+      }
+      const mid = (high[i] + low[i]) / 2;
+      const range = hh - ll;
+      let value = range !== 0 ? 0.66 * ((mid - ll) / range - 0.5) + 0.67 * prevValue : 0;
+      value = Math.max(-0.999, Math.min(0.999, value));
+      const fisher = 0.5 * Math.log((1 + value) / (1 - value)) + 0.5 * prevFisher;
+      r[i] = fisher;
+      prevValue = value;
+      prevFisher = fisher;
+    }
+    return r;
+  },
+
+  connorsRsi(source, rsiLen = 3, streakLen = 2, rocLen = 100) {
+    const rsi1 = this.rsi(source, rsiLen);
+    const streak = new Array(source.length).fill(0);
+    for (let i = 1; i < source.length; i++) {
+      if (source[i] > source[i - 1]) streak[i] = streak[i - 1] > 0 ? streak[i - 1] + 1 : 1;
+      else if (source[i] < source[i - 1]) streak[i] = streak[i - 1] < 0 ? streak[i - 1] - 1 : -1;
+      else streak[i] = 0;
+    }
+    const rsiStreak = this.rsi(streak, streakLen);
+    const roc = this.roc(source, 1);
+    const pctRank = new Array(source.length).fill(NaN);
+    for (let i = rocLen; i < source.length; i++) {
+      let cnt = 0;
+      for (let j = 1; j <= rocLen; j++) if (roc[i - j] < roc[i]) cnt++;
+      pctRank[i] = (cnt / rocLen) * 100;
+    }
+    return source.map((_, i) => {
+      if (isNaN(rsi1[i]) || isNaN(rsiStreak[i]) || isNaN(pctRank[i])) return NaN;
+      return (rsi1[i] + rsiStreak[i] + pctRank[i]) / 3;
+    });
+  },
+
+  choppiness(high, low, close, length = 14) {
+    const atrArr = this.atr(high, low, close, 1);
+    const r = new Array(close.length).fill(NaN);
+    for (let i = length; i < close.length; i++) {
+      let sumAtr = 0, hh = -Infinity, ll = Infinity;
+      for (let j = 0; j < length; j++) {
+        sumAtr += atrArr[i - j] || 0;
+        hh = Math.max(hh, high[i - j]);
+        ll = Math.min(ll, low[i - j]);
+      }
+      const range = hh - ll;
+      r[i] = range > 0 ? 100 * Math.log10(sumAtr / range) / Math.log10(length) : NaN;
+    }
+    return r;
+  },
+
+  stc(source, fast = 23, slow = 50, cycle = 10, d1 = 3, d2 = 3) {
+    const macdLine = this.ema(source, fast).map((v, i) => v - this.ema(source, slow)[i]);
+    const cleanMacd = macdLine.map(v => isNaN(v) ? 0 : v);
+    const k1 = new Array(cleanMacd.length).fill(NaN);
+    for (let i = cycle - 1; i < cleanMacd.length; i++) {
+      let hh = -Infinity, ll = Infinity;
+      for (let j = 0; j < cycle; j++) { hh = Math.max(hh, cleanMacd[i - j]); ll = Math.min(ll, cleanMacd[i - j]); }
+      k1[i] = hh - ll !== 0 ? ((cleanMacd[i] - ll) / (hh - ll)) * 100 : 0;
+    }
+    const d = this.ema(k1.map(v => isNaN(v) ? 0 : v), d1);
+    const k2 = new Array(d.length).fill(NaN);
+    for (let i = cycle - 1; i < d.length; i++) {
+      let hh = -Infinity, ll = Infinity;
+      for (let j = 0; j < cycle; j++) { hh = Math.max(hh, d[i - j]); ll = Math.min(ll, d[i - j]); }
+      k2[i] = hh - ll !== 0 ? ((d[i] - ll) / (hh - ll)) * 100 : 0;
+    }
+    return this.ema(k2.map(v => isNaN(v) ? 0 : v), d2);
+  },
+
   // ── ZigZag (custom) ──
 
   zigzag(high, low, pctChange = 5) {
@@ -1037,6 +1240,74 @@ export const ta = {
   pivotlow(src, left, right) {
     const arr = src instanceof Series ? src.toArray() : src;
     return new Series(taCore.pivotlow(arr, left, right), v => v);
+  },
+
+  // ── New indicator wrappers ──
+  dema: (src, len) => _wrapTA('dema', src, len),
+  tema: (src, len) => _wrapTA('tema', src, len),
+  kama: (src, len, fast, slow) => _wrapTA('kama', src, len, fast, slow),
+  zlema: (src, len) => _wrapTA('zlema', src, len),
+  trix: (src, len) => _wrapTA('trix', src, len),
+  connorsRsi: (src, r, s, c) => _wrapTA('connorsRsi', src, r, s, c),
+
+  obv(close, vol) {
+    const c = close instanceof Series ? close.toArray() : close;
+    const v = vol instanceof Series ? vol.toArray() : vol;
+    return new Series(taCore.obv(c, v), x => x);
+  },
+
+  ad(high, low, close, vol) {
+    const h = high instanceof Series ? high.toArray() : high;
+    const l = low instanceof Series ? low.toArray() : low;
+    const c = close instanceof Series ? close.toArray() : close;
+    const v = vol instanceof Series ? vol.toArray() : vol;
+    return new Series(taCore.ad(h, l, c, v), x => x);
+  },
+
+  cmf(high, low, close, vol, len = 20) {
+    const h = high instanceof Series ? high.toArray() : high;
+    const l = low instanceof Series ? low.toArray() : low;
+    const c = close instanceof Series ? close.toArray() : close;
+    const v = vol instanceof Series ? vol.toArray() : vol;
+    return new Series(taCore.cmf(h, l, c, v, len), x => x);
+  },
+
+  efi(close, vol, len = 13) {
+    const c = close instanceof Series ? close.toArray() : close;
+    const v = vol instanceof Series ? vol.toArray() : vol;
+    return new Series(taCore.efi(c, v, len), x => x);
+  },
+
+  pvt(close, vol) {
+    const c = close instanceof Series ? close.toArray() : close;
+    const v = vol instanceof Series ? vol.toArray() : vol;
+    return new Series(taCore.pvt(c, v), x => x);
+  },
+
+  vortex(high, low, close, len = 14) {
+    const h = high instanceof Series ? high.toArray() : high;
+    const l = low instanceof Series ? low.toArray() : low;
+    const c = close instanceof Series ? close.toArray() : close;
+    const [vp, vm] = taCore.vortex(h, l, c, len);
+    return [new Series(vp, x => x), new Series(vm, x => x)];
+  },
+
+  fisher(high, low, len = 10) {
+    const h = high instanceof Series ? high.toArray() : high;
+    const l = low instanceof Series ? low.toArray() : low;
+    return new Series(taCore.fisher(h, l, len), x => x);
+  },
+
+  choppiness(high, low, close, len = 14) {
+    const h = high instanceof Series ? high.toArray() : high;
+    const l = low instanceof Series ? low.toArray() : low;
+    const c = close instanceof Series ? close.toArray() : close;
+    return new Series(taCore.choppiness(h, l, c, len), x => x);
+  },
+
+  stc(src, fast, slow, cycle, d1, d2) {
+    const arr = src instanceof Series ? src.toArray() : src;
+    return new Series(taCore.stc(arr, fast, slow, cycle, d1, d2), x => x);
   },
 };
 

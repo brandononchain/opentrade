@@ -1818,3 +1818,166 @@ plot(cumDelta_ / volume * 10, "Cum Delta (scaled)", color.new(color.blue, 60), 1
 
 // Merge pro templates into main TEMPLATES
 Object.assign(TEMPLATES, PRO_TEMPLATES);
+
+// ═══════════════════════════════════════════════════════════════════════
+// Quant Research Templates (v4) — institutional analytics on chart
+// ═══════════════════════════════════════════════════════════════════════
+
+export const QUANT_RESEARCH_TEMPLATES = {
+
+  quant_tearsheet: `//@version=6
+indicator("Quant Tearsheet", overlay=false)
+length = input.int(252, "Lookback (bars)")
+rf = input.float(0.0, "Risk-Free per Period", step=0.0001)
+
+ret = ta.change(close) / close[1]
+m = ta.sma(ret, length)
+s = ta.stdev(ret, length)
+sharpe = s != 0 ? (m - rf) / s * math.sqrt(252) : 0
+
+downside = ret < 0 ? ret * ret : 0
+ddev = math.sqrt(ta.sma(downside, length))
+sortino = ddev != 0 ? (m - rf) / ddev * math.sqrt(252) : 0
+
+peak = ta.highest(close, length)
+dd = (close - peak) / peak * 100
+maxDD = ta.lowest(dd, length)
+
+var ttbl = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 80))
+if barstate.islast
+    table.cell(ttbl, 0, 0, "Metric", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(ttbl, 1, 0, "Value", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(ttbl, 0, 1, "Sharpe"); table.cell(ttbl, 1, 1, str.tostring(sharpe, "#.##"), text_color=sharpe > 1 ? color.lime : color.red)
+    table.cell(ttbl, 0, 2, "Sortino"); table.cell(ttbl, 1, 2, str.tostring(sortino, "#.##"), text_color=sortino > 1 ? color.lime : color.red)
+    table.cell(ttbl, 0, 3, "Ann Ret %"); table.cell(ttbl, 1, 3, str.tostring(m * 252 * 100, "#.##"))
+    table.cell(ttbl, 0, 4, "Ann Vol %"); table.cell(ttbl, 1, 4, str.tostring(s * math.sqrt(252) * 100, "#.##"))
+    table.cell(ttbl, 0, 5, "MaxDD %"); table.cell(ttbl, 1, 5, str.tostring(maxDD, "#.##"), text_color=color.red)
+
+plot(sharpe, "Sharpe (rolling)", color.aqua)
+hline(1, "Sharpe=1", color.gray)
+hline(0, "Zero", color.silver)
+`,
+
+  zscore_mean_reversion: `//@version=6
+strategy("Z-Score Mean Reversion", overlay=true, initial_capital=100000,
+    default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+    commission_type=strategy.commission.percent, commission_value=0.05, slippage=2)
+
+length = input.int(20, "Z-Score Length")
+entryZ = input.float(2.0, "Entry Z")
+exitZ = input.float(0.3, "Exit Z")
+stopZ  = input.float(3.5, "Hard Stop Z")
+
+mean_ = ta.sma(close, length)
+std_  = ta.stdev(close, length)
+z = std_ != 0 ? (close - mean_) / std_ : 0.0
+
+longEntry  = z[1] <= -entryZ and z[1] > -stopZ
+shortEntry = z[1] >=  entryZ and z[1] <  stopZ
+longExit   = z[1] >= -exitZ
+shortExit  = z[1] <=  exitZ
+
+if longEntry
+    strategy.entry("L", strategy.long)
+if shortEntry
+    strategy.entry("S", strategy.short)
+if longExit
+    strategy.close("L")
+if shortExit
+    strategy.close("S")
+
+if z[1] < -stopZ
+    strategy.close("L", comment="stop")
+if z[1] > stopZ
+    strategy.close("S", comment="stop")
+
+plot(z, "Z", color.purple, display=display.data_window)
+`,
+
+  pairs_trading: `//@version=6
+indicator("Pairs Trading Spread", overlay=false)
+sym2 = input.symbol("AMEX:SPY", "Asset 2")
+length = input.int(60, "Length")
+entryZ = input.float(2.0, "Entry Z")
+
+s1 = math.log(close)
+s2 = math.log(request.security(sym2, timeframe.period, close))
+spread = s1 - s2
+m = ta.sma(spread, length)
+sd = ta.stdev(spread, length)
+z = sd != 0 ? (spread - m) / sd : 0.0
+
+bg = z > entryZ ? color.new(color.red, 80) : z < -entryZ ? color.new(color.lime, 80) : na
+bgcolor(bg)
+plot(z, "Spread Z", color.aqua, 2)
+hline( entryZ, "Short", color.red)
+hline(-entryZ, "Long",  color.lime)
+hline(0, "Mean", color.gray)
+`,
+
+  hurst_regime: `//@version=6
+indicator("Hurst Regime", overlay=false)
+length = input.int(100, "Window")
+
+// Simplified rescaled-range proxy: ratio of range to standard deviation, log-scaled
+rng = ta.highest(close, length) - ta.lowest(close, length)
+sd  = ta.stdev(close, length)
+rs  = sd != 0 ? rng / sd : 1.0
+h   = math.log(rs) / math.log(length)
+
+regime = h > 0.55 ? "TREND" : h < 0.45 ? "MEAN-REV" : "RANDOM"
+col = h > 0.55 ? color.lime : h < 0.45 ? color.orange : color.gray
+
+plot(h, "Hurst Proxy", col, 2)
+hline(0.5, "Random Walk", color.silver)
+hline(0.55, "Trend", color.new(color.lime, 50))
+hline(0.45, "Mean-Rev", color.new(color.orange, 50))
+
+var lbl = label.new(bar_index, h, regime, color=col, textcolor=color.black, style=label.style_label_left)
+if barstate.islast
+    label.set_xy(lbl, bar_index, h)
+    label.set_text(lbl, regime + " " + str.tostring(h, "#.##"))
+    label.set_color(lbl, col)
+`,
+
+  vol_targeted_position: `//@version=6
+indicator("Vol-Targeted Position Size", overlay=false)
+targetVol = input.float(0.15, "Target Annual Vol", step=0.01)
+capital   = input.float(100000, "Capital")
+maxLev    = input.float(3.0,  "Max Leverage")
+
+ret = ta.change(close) / close[1]
+rv  = ta.stdev(ret, 20) * math.sqrt(252)
+lev = rv > 0 ? math.min(maxLev, targetVol / rv) : 0.0
+notional = capital * lev
+units    = notional / close
+
+plot(lev, "Leverage", color.aqua, 2)
+plot(rv,  "Realized Vol", color.orange, 1)
+hline(targetVol, "Target Vol", color.gray)
+
+var pTbl = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 80))
+if barstate.islast
+    table.cell(pTbl, 0, 0, "Leverage"); table.cell(pTbl, 1, 0, str.tostring(lev, "#.##") + "x", text_color=color.aqua)
+    table.cell(pTbl, 0, 1, "Realized Vol"); table.cell(pTbl, 1, 1, str.tostring(rv * 100, "#.##") + "%")
+    table.cell(pTbl, 0, 2, "Notional"); table.cell(pTbl, 1, 2, "$" + str.tostring(notional, "#,###"))
+    table.cell(pTbl, 0, 3, "Units"); table.cell(pTbl, 1, 3, str.tostring(units, "#.##"))
+`,
+
+  garch_volatility: `//@version=6
+indicator("EWMA Volatility (RiskMetrics)", overlay=false)
+lambda_ = input.float(0.94, "Decay", step=0.01)
+
+ret = ta.change(close) / close[1]
+var float v = 0.0
+v := na(v[1]) ? ret * ret : lambda_ * nz(v[1]) + (1 - lambda_) * ret * ret
+ewma = math.sqrt(v) * math.sqrt(252)
+
+rolling20 = ta.stdev(ret, 20) * math.sqrt(252)
+plot(ewma,       "EWMA Annualized", color.aqua, 2)
+plot(rolling20,  "Rolling-20",       color.orange, 1)
+`,
+
+};
+
+Object.assign(TEMPLATES, QUANT_RESEARCH_TEMPLATES);
